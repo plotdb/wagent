@@ -1,0 +1,60 @@
+<div>
+  <div class="wrap"><canvas></canvas></div>
+  <style>
+    .wrap { height: 400px; }
+  </style>
+  <script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'monthly-orders-line',
+        version: 'main',
+        description: '以 Chart.js 繪製各月訂單數長條圖（bar），含平均值虛線，來源 data/sales.csv'
+      },
+      init: function(opt) {
+        var canvas = opt.root.querySelector('canvas');
+        return fetch('/workspace/data/sales.csv')
+          .then(function(r) { return r.text(); })
+          .then(function(txt) {
+            var rows = d3.csvParse(txt);
+            var labels = rows.map(function(d) { return d.month; });
+            var data = rows.map(function(d) { return +d.orders; });
+            var avg = data.length ? data.reduce(function(a, b) { return a + b; }, 0) / data.length : 0;
+            new Chart(canvas, {
+              type: 'bar',
+              data: {
+                labels: labels,
+                datasets: [{
+                  label: '訂單數',
+                  data: data,
+                  backgroundColor: '#3b82f6',
+                  borderColor: '#1d4ed8',
+                  borderWidth: 1
+                }, {
+                  type: 'line',
+                  label: '平均值',
+                  data: labels.map(function() { return avg; }),
+                  borderColor: '#6b7280',
+                  borderDash: [6, 6],
+                  borderWidth: 2,
+                  pointRadius: 0,
+                  tension: 0
+                }]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {display: true},
+                  title: {display: true, text: '各月訂單數（Bar）'}
+                },
+                scales: {
+                  x: {title: {display: true, text: '月份'}, grid: {display: false}},
+                  y: {beginAtZero: true, title: {display: true, text: '訂單數'}}
+                }
+              }
+            });
+          });
+      }
+    };
+  </script>
+</div>

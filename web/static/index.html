@@ -1,0 +1,81 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>我的圖表</title><script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script><script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script><style type="text/css">* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, "Helvetica Neue", "PingFang TC", sans-serif; background: #f5f5f2; min-height: 100vh; }
+header { padding: 18px 28px; display: flex; align-items: baseline; gap: 12px; }
+header h1 { font-size: 20px; margin: 0; }
+header .sub { font-size: 12px; color: #999; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; padding: 0 28px 40px; }
+.card { background: #fff; border: 1px solid #e2e2de; border-radius: 10px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; transition: box-shadow .15s; }
+.card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+.card .thumb { height: 200px; padding: 10px; pointer-events: none; overflow: hidden; position: relative; }
+.card .thumb .err { color: #b3261e; font-size: 12px; padding-top: 80px; text-align: center; }
+.card .info { padding: 12px 16px; border-top: 1px solid #f0f0ec; }
+.card .info .name { font-size: 14.5px; font-weight: 600; }
+.card .info .desc { font-size: 12.5px; color: #888; margin-top: 3px; min-height: 16px; }
+.card.new { align-items: center; justify-content: center; min-height: 262px; border-style: dashed; color: #999; font-size: 15px; background: transparent; }
+.card.new:hover { color: #2b6cb0; border-color: #2b6cb0; }
+.card.new .plus { font-size: 36px; line-height: 1; margin-bottom: 8px; }</style></head><body><header><h1>我的圖表</h1><div class="sub">點擊卡片進入編輯 · 檔案存於 workspace/blocks/</div></header><div class="grid" id="grid"></div><script>(function() {
+  var ctx = {
+    d3: window.d3,
+    Chart: window.Chart,
+    loadText: function(p) {
+      return fetch('/workspace/' + p).then(function(r) {
+        if(!r.ok) { throw new Error('load failed: ' + p); }
+        return r.text();
+      });
+    },
+    loadJSON: function(p) {
+      return fetch('/workspace/' + p).then(function(r) {
+        if(!r.ok) { throw new Error('load failed: ' + p); }
+        return r.json();
+      });
+    }
+  };
+
+  function renderBlock(name, root) {
+    return fetch('/workspace/blocks/' + name + '/index.js?t=' + Date.now())
+      .then(function(r) {
+        if(!r.ok) { throw new Error('block not found'); }
+        return r.text();
+      })
+      .then(function(code) {
+        var module = {exports: {}};
+        new Function('module', 'exports', code)(module, module.exports);
+        if(!module.exports || typeof module.exports.init !== 'function') {
+          throw new Error('invalid block');
+        }
+        return module.exports.init({root: root, ctx: ctx});
+      });
+  }
+
+  var grid = document.getElementById('grid');
+
+  function card(b) {
+    var el = document.createElement('div');
+    el.className = 'card';
+    var thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    var info = document.createElement('div');
+    info.className = 'info';
+    info.innerHTML = '<div class="name"></div><div class="desc"></div>';
+    info.querySelector('.name').textContent = b.name;
+    info.querySelector('.desc').textContent = b.description || '';
+    el.appendChild(thumb);
+    el.appendChild(info);
+    el.onclick = function() { location.href = '/edit.html?block=' + encodeURIComponent(b.name); };
+    renderBlock(b.name, thumb).catch(function(e) {
+      thumb.innerHTML = '<div class="err">預覽失敗: ' + e.message + '</div>';
+    });
+    return el;
+  }
+
+  fetch('/api/blocks')
+    .then(function(r) { return r.json(); })
+    .then(function(blocks) {
+      var add = document.createElement('div');
+      add.className = 'card new';
+      add.innerHTML = '<div class="plus">+</div><div>新增圖表</div>';
+      add.onclick = function() { location.href = '/edit.html'; };
+      grid.appendChild(add);
+      blocks.forEach(function(b) { grid.appendChild(card(b)); });
+    });
+})();</script></body></html>

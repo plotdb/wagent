@@ -1,0 +1,35 @@
+<div>
+  <div class="wrap"><canvas></canvas></div>
+  <style>
+    .wrap { height: 400px; }
+  </style>
+  <script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'sample-bar',
+        version: 'main',
+        description: '每月銷售額長條圖 (Chart.js), 讀取 data/sales.csv'
+      },
+      init: function(opt) {
+        var canvas = opt.root.querySelector('canvas');
+        return fetch('/workspace/data/sales.csv')
+          .then(function(r) { return r.text(); })
+          .then(function(text) {
+            var rows = d3.csvParse(text);
+            new Chart(canvas, {
+              type: 'bar',
+              data: {
+                labels: rows.map(function(r) { return r.month; }),
+                datasets: [{
+                  label: 'Revenue',
+                  data: rows.map(function(r) { return +r.revenue; }),
+                  backgroundColor: '#2b6cb0'
+                }]
+              },
+              options: {responsive: true, maintainAspectRatio: false}
+            });
+          });
+      }
+    };
+  </script>
+</div>

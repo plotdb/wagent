@@ -1,0 +1,67 @@
+<div>
+  <div class="rc-sandbox-bar">
+    <select><option value="">— 選擇 block —</option></select>
+    <button title="重新渲染">↻</button>
+  </div>
+  <div class="rc-sandbox-stage">
+    <div class="rc-sandbox-empty">尚無內容 — 用對話建立 block,或從上方選單選擇</div>
+  </div>
+  <style>
+    /* :scope 會被 csscope 換成 scope root 本身的 selector */
+    :scope { display: flex; flex-direction: column; height: 100%; }
+    .rc-sandbox-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+    .rc-sandbox-bar select { padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; background: #fff; }
+    .rc-sandbox-bar button { padding: 6px 12px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
+    .rc-sandbox-stage { flex: 1; background: #fff; border: 1px solid #e2e2de; border-radius: 8px; min-height: 440px; padding: 16px; }
+    .rc-sandbox-empty { color: #999; font-size: 14px; text-align: center; padding-top: 180px; }
+  </style>
+  <!-- sandbox 預設視覺層: extend sandbox-base。用戶可 extend sandbox-base 自訂視覺。 -->
+  <script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'sandbox',
+        version: 'main',
+        description: 'sandbox 預設視覺: block 選單 + 預覽區',
+        extend: {name: 'sandbox-base', dom: 'overwrite'}
+      },
+      init: function(opt) {
+        var root = opt.root;
+        var base = this.base = opt.parent.interface();
+        var select = root.querySelector('select');
+        var refreshBtn = root.querySelector('button');
+        var stage = root.querySelector('.rc-sandbox-stage');
+
+        function reloadList() {
+          return base.list().then(function(list) {
+            var cur = base.current();
+            select.innerHTML = '<option value="">— 選擇 block —</option>' +
+              list.map(function(b) {
+                return '<option value="' + b.name + '"' + (b.name === cur ? ' selected' : '') + '>' +
+                  b.name + '</option>';
+              }).join('');
+          });
+        }
+
+        base.on('show', function(name) {
+          stage.innerHTML = '';
+          var el = document.createElement('div');
+          el.style.minHeight = '400px';
+          stage.appendChild(el);
+          base.render(name, el).catch(function(e) {
+            stage.innerHTML = '<div class="rc-sandbox-empty">渲染失敗: ' + e.message + '</div>';
+            console.error(e);
+          });
+          reloadList();
+        });
+
+        select.onchange = function() {
+          if(select.value) { base.show(select.value); }
+        };
+        refreshBtn.onclick = function() { base.refresh(); };
+
+        reloadList();
+      },
+      interface: function() { return this.base; }
+    };
+  </script>
+</div>

@@ -1,0 +1,72 @@
+doctype html
+html
+  head
+    meta(charset="utf-8")
+    meta(name="viewport" content="width=device-width, initial-scale=1")
+    title Block Agent (refactor-0809)
+    script(src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js")
+    script(src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js")
+    script(src="/assets/lib/proxise/main/index.min.js")
+    script(src="/assets/lib/@plotdb/semver/main/index.min.js")
+    script(src="/assets/lib/@plotdb/csscope/main/index.min.js")
+    script(src="/assets/lib/@plotdb/rescope/main/index.min.js")
+    script(src="/assets/lib/@plotdb/block/main/index.min.js")
+    style(type="text/css").
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: -apple-system, "Helvetica Neue", "PingFang TC", sans-serif; height: 100vh; display: flex; background: #f5f5f2; }
+      #chat-root { width: 420px; min-width: 320px; border-right: 1px solid #ddd; background: #fff; }
+      #chat-root > div { height: 100%; }
+      #sandbox-root { flex: 1; min-width: 0; padding: 20px; overflow: auto; }
+      #sandbox-root > div { height: 100%; }
+  body
+    #chat-root
+    #sandbox-root
+
+    script.
+      (function() {
+        var params = new URLSearchParams(location.search);
+        var blockName = params.get('block');  // null = 新增模式
+        var API = '/api/refactor-0809';
+
+        // app block 的 registry: chat / sandbox 及其 base 層
+        var paths = {
+          'chat-base': 'chat/base.html',
+          'chat': 'chat/index.html',
+          'sandbox-base': 'sandbox/base.html',
+          'sandbox': 'sandbox/index.html'
+        };
+        var mgr = new block.manager({
+          registry: function(o) {
+            if(o.type === 'block') {
+              if(!paths[o.name]) { return null; }
+              return '/refactor-0809/block/' + paths[o.name] + '?t=' + Date.now();
+            }
+            return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
+          }
+        });
+
+        function create(name, root, data) {
+          return mgr.get({name: name})
+            .then(function(cls) { return cls.create({root: root, data: data}); })
+            .then(function(inst) { return inst.interface(); });
+        }
+
+        // 先載 base 層讓 extend 可解析, 再依序起 sandbox -> chat (chat 需要 sandbox interface)
+        mgr.get([{name: 'chat-base'}, {name: 'sandbox-base'}])
+          .then(function() {
+            return create('sandbox', document.getElementById('sandbox-root'), {api: API, workspace: '/workspace'});
+          })
+          .then(function(sb) {
+            if(blockName) { sb.show(blockName); }
+            return create('chat', document.getElementById('chat-root'), {api: API, block: blockName, sandbox: sb});
+          })
+          .then(function(chat) {
+            chat.on('block', function(name) {
+              history.replaceState(null, '', location.pathname + '?block=' + encodeURIComponent(name));
+            });
+          })
+          .catch(function(e) {
+            document.body.textContent = '初始化失敗: ' + e.message;
+            console.error(e);
+          });
+      })();

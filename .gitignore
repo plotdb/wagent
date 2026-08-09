@@ -1,0 +1,7 @@
+/context/shared
+.env
+node_modules
+context/cached
+logs
+web/static/assets/lib
+.fedep

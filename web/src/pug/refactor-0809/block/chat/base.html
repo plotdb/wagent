@@ -1,0 +1,93 @@
+<div>
+  <!-- chat base 層: headless, 只有邏輯。視覺由 extend 此 block 的 derived 層實作。 -->
+  <script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'chat-base',
+        version: 'main',
+        description: 'chat 邏輯層: 對話 api 溝通、事件廣播、sandbox 操作'
+      },
+      init: function(opt) {
+        var d = opt.data || {};
+        this.api = d.api || '/api/refactor-0809';
+        this.blockName = d.block || null;
+        this.session = d.session || ('draft-' + Math.random().toString(36).slice(2, 10));
+        this.sandbox = d.sandbox || null;
+        this.handlers = {};
+      },
+      interface: function() {
+        var self = this;
+        if(this.itf) { return this.itf; }
+        function emit(ev, data) {
+          (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
+        }
+        // write_file 事件的自動反應: 寫 blocks/<name>/index.html -> 切換並渲染該 block;
+        // 寫其他檔案 (如 data/) -> 重新渲染目前 block
+        function applyEvents(events) {
+          var written = (events || []).filter(function(ev) {
+            return ev.tool === 'write_file' && !ev.error;
+          });
+          if(!written.length) { return; }
+          var blockWrites = written.filter(function(ev) {
+            return /^blocks\/([^\/]+)\/index\.html$/.test(ev.input.path);
+          });
+          if(blockWrites.length) {
+            var name = blockWrites[blockWrites.length - 1].input.path.split('/')[1];
+            self.itf.setBlock(name);
+            if(self.sandbox) { self.sandbox.show(name); }
+          } else if(self.sandbox) {
+            self.sandbox.refresh();
+          }
+        }
+        this.itf = {
+          on: function(ev, fn) {
+            (self.handlers[ev] = self.handlers[ev] || []).push(fn);
+            return self.itf;
+          },
+          block: function() { return self.blockName; },
+          setBlock: function(name) {
+            self.blockName = name;
+            emit('block', name);
+          },
+          send: function(text) {
+            emit('busy', true);
+            return fetch(self.api + '/chat', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({message: text, block: self.blockName, session: self.blockName || self.session})
+            })
+              .then(function(r) {
+                return r.json().then(function(j) {
+                  if(!r.ok) { throw new Error(j.error || r.status); }
+                  return j;
+                });
+              })
+              .then(function(j) {
+                (j.events || []).forEach(function(ev) { emit('tool', ev); });
+                applyEvents(j.events);
+                emit('reply', j.reply || '');
+                emit('busy', false);
+                return j;
+              })
+              .catch(function(e) {
+                emit('busy', false);
+                emit('error', e);
+                throw e;
+              });
+          },
+          reset: function() {
+            return fetch(self.api + '/reset', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({session: self.blockName || self.session})
+            }).then(function(r) { return r.json(); });
+          },
+          provider: function() {
+            return fetch(self.api + '/provider').then(function(r) { return r.json(); });
+          }
+        };
+        return this.itf;
+      }
+    };
+  </script>
+</div>

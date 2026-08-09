@@ -1,0 +1,181 @@
+doctype html
+html
+  head
+    meta(charset="utf-8")
+    meta(name="viewport" content="width=device-width, initial-scale=1")
+    title 編輯圖表
+    script(src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js")
+    script(src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js")
+    style(type="text/css").
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: -apple-system, "Helvetica Neue", "PingFang TC", sans-serif; height: 100vh; display: flex; background: #f5f5f2; }
+      .chat-pane { width: 420px; min-width: 320px; display: flex; flex-direction: column; border-right: 1px solid #ddd; background: #fff; }
+      .chat-header { padding: 12px 16px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .chat-header .left { min-width: 0; }
+      .chat-header h1 { font-size: 15px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .chat-header .sub { font-size: 11px; color: #999; }
+      .chat-header a { font-size: 12px; color: #2b6cb0; text-decoration: none; white-space: nowrap; }
+      .chat-log { flex: 1; overflow-y: auto; padding: 12px; }
+      .msg { margin-bottom: 10px; max-width: 92%; padding: 8px 12px; border-radius: 10px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+      .msg.user { background: #2b6cb0; color: #fff; margin-left: auto; }
+      .msg.assistant { background: #f0f0ec; color: #222; }
+      .msg.event { background: transparent; color: #888; font-size: 12px; padding: 2px 6px; font-family: Menlo, monospace; }
+      .msg.error { background: #fdecea; color: #b3261e; }
+      .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid #eee; }
+      .chat-input textarea { flex: 1; resize: none; height: 60px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13.5px; font-family: inherit; }
+      .chat-input button { padding: 0 18px; border: 0; border-radius: 6px; background: #2b6cb0; color: #fff; cursor: pointer; font-size: 14px; }
+      .chat-input button:disabled { background: #aaa; }
+      .main-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      .preview { flex: 1; padding: 20px; overflow: auto; }
+      .preview-inner { background: #fff; border: 1px solid #e2e2de; border-radius: 8px; min-height: 440px; padding: 16px; }
+      .preview-empty { color: #999; font-size: 14px; text-align: center; padding-top: 180px; }
+  body
+    .chat-pane
+      .chat-header
+        .left
+          h1#title 新增圖表
+          #provider-info.sub
+        a(href="/") ← 回列表
+      #chat-log.chat-log
+      .chat-input
+        textarea#chat-text(placeholder="輸入訊息,Enter 送出,Shift+Enter 換行")
+        button#send-btn 送出
+    .main-pane
+      .preview
+        #preview.preview-inner
+
+    script.
+      (function() {
+        var params = new URLSearchParams(location.search);
+        var block = params.get('block');  // null = new chart mode
+        var draftId = 'draft-' + Math.random().toString(36).slice(2, 10);
+
+        var log = document.getElementById('chat-log');
+        var input = document.getElementById('chat-text');
+        var sendBtn = document.getElementById('send-btn');
+        var preview = document.getElementById('preview');
+        var title = document.getElementById('title');
+
+        function addMsg(cls, text) {
+          var d = document.createElement('div');
+          d.className = 'msg ' + cls;
+          d.textContent = text;
+          log.appendChild(d);
+          log.scrollTop = log.scrollHeight;
+          return d;
+        }
+
+        var ctx = {
+          d3: window.d3,
+          Chart: window.Chart,
+          loadText: function(p) {
+            return fetch('/workspace/' + p).then(function(r) {
+              if(!r.ok) { throw new Error('load failed: ' + p); }
+              return r.text();
+            });
+          },
+          loadJSON: function(p) {
+            return fetch('/workspace/' + p).then(function(r) {
+              if(!r.ok) { throw new Error('load failed: ' + p); }
+              return r.json();
+            });
+          }
+        };
+
+        function renderPreview() {
+          if(!block) {
+            preview.innerHTML = '<div class="preview-empty">尚無圖表 — 用左側對話描述你要的圖表</div>';
+            return;
+          }
+          preview.innerHTML = '';
+          var root = document.createElement('div');
+          root.style.minHeight = '400px';
+          preview.appendChild(root);
+          fetch('/workspace/blocks/' + block + '/index.js?t=' + Date.now())
+            .then(function(r) {
+              if(!r.ok) { throw new Error('block not found: ' + block); }
+              return r.text();
+            })
+            .then(function(code) {
+              var module = {exports: {}};
+              new Function('module', 'exports', code)(module, module.exports);
+              if(!module.exports || typeof module.exports.init !== 'function') {
+                throw new Error('invalid block: missing init()');
+              }
+              return module.exports.init({root: root, ctx: ctx});
+            })
+            .catch(function(e) {
+              preview.innerHTML = '<div class="preview-empty">渲染失敗: ' + e.message + '</div>';
+              console.error(e);
+            });
+        }
+
+        function setBlock(name) {
+          block = name;
+          title.textContent = name;
+          history.replaceState(null, '', '/edit.html?block=' + encodeURIComponent(name));
+          renderPreview();
+        }
+
+        function send() {
+          var text = input.value.trim();
+          if(!text || sendBtn.disabled) { return; }
+          input.value = '';
+          addMsg('user', text);
+          sendBtn.disabled = true;
+          var thinking = addMsg('event', '思考中…');
+          fetch('/api/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: text, block: block, session: block || draftId})
+          })
+            .then(function(r) {
+              return r.json().then(function(j) {
+                if(!r.ok) { throw new Error(j.error || r.status); }
+                return j;
+              });
+            })
+            .then(function(j) {
+              thinking.remove();
+              (j.events || []).forEach(function(ev) {
+                var p = ev.input && ev.input.path ? ' ' + ev.input.path : '';
+                addMsg('event', (ev.error ? '✗ ' : '✓ ') + ev.tool + p);
+              });
+              addMsg('assistant', j.reply || '(無回覆)');
+              var written = (j.events || []).filter(function(ev) {
+                return ev.tool === 'write_file' && !ev.error &&
+                  /^blocks\/([^\/]+)\/index\.js$/.test(ev.input.path);
+              });
+              if(written.length) {
+                setBlock(written[written.length - 1].input.path.split('/')[1]);
+              } else if(written.length === 0 && j.events && j.events.some(function(ev) {
+                return ev.tool === 'write_file' && !ev.error;
+              })) {
+                renderPreview();  // data file changed — re-render current block
+              }
+            })
+            .catch(function(e) {
+              thinking.remove();
+              addMsg('error', '錯誤: ' + e.message);
+            })
+            .then(function() { sendBtn.disabled = false; input.focus(); });
+        }
+
+        sendBtn.onclick = send;
+        input.addEventListener('keydown', function(e) {
+          if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+        });
+
+        if(block) {
+          title.textContent = block;
+          addMsg('assistant', '正在編輯「' + block + '」。告訴我你要怎麼修改,例如換圖表類型、改顏色、加資料欄位。');
+        } else {
+          addMsg('assistant', '描述你想要的圖表,我會建立一個新的 block。例如:「用 sales 資料畫營收與訂單數的雙軸圖」。');
+        }
+        renderPreview();
+        fetch('/api/provider').then(function(r) { return r.json(); }).then(function(j) {
+          document.getElementById('provider-info').textContent =
+            j.provider ? j.provider + ' / ' + j.model : '未設定 API key (.env)';
+        });
+        input.focus();
+      })();

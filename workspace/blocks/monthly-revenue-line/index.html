@@ -1,0 +1,69 @@
+<div>
+  <div class="wrap"><canvas></canvas></div>
+  <style>
+    .wrap { height: 400px; }
+  </style>
+  <script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'monthly-revenue-line',
+        version: 'main',
+        description: '以 Chart.js 繪製每月營收折線圖，來源 data/sales.csv'
+      },
+      init: function(opt) {
+        var canvas = opt.root.querySelector('canvas');
+        return fetch('/workspace/data/sales.csv')
+          .then(function(r) { return r.text(); })
+          .then(function(txt) {
+            var rows = d3.csvParse(txt);
+            var labels = rows.map(function(d) { return d.month; });
+            var data = rows.map(function(d) { return +d.revenue; });
+            new Chart(canvas, {
+              type: 'line',
+              data: {
+                labels: labels,
+                datasets: [{
+                  label: '營收',
+                  data: data,
+                  borderColor: '#22c55e',
+                  backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                  borderWidth: 2,
+                  pointRadius: 3,
+                  pointHoverRadius: 5,
+                  tension: 0.3,
+                  fill: true
+                }]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {display: true},
+                  title: {display: true, text: '每月營收（Line）'},
+                  tooltip: {
+                    callbacks: {
+                      label: function(ctx) {
+                        var v = ctx.parsed.y;
+                        var s = (v == null || isNaN(v)) ? '-' : (v).toLocaleString('zh-TW');
+                        return '營收: ' + s + ' 元';
+                      }
+                    }
+                  }
+                },
+                scales: {
+                  x: {title: {display: true, text: '月份'}, grid: {display: false}},
+                  y: {
+                    beginAtZero: true,
+                    title: {display: true, text: '營收（元）'},
+                    ticks: {
+                      callback: function(v) { return Number(v).toLocaleString('zh-TW'); }
+                    }
+                  }
+                }
+              }
+            });
+          });
+      }
+    };
+  </script>
+</div>

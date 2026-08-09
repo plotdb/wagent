@@ -1,0 +1,180 @@
+<div>
+  <!-- chat base 層: headless, 只有邏輯。視覺由 extend 此 block 的 derived 層實作。 -->
+  <script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'chat-base',
+        version: 'main',
+        description: 'chat 邏輯層: 對話 api 溝通、事件廣播、sandbox 操作'
+      },
+      init: function(opt) {
+        var d = opt.data || {};
+        this.api = d.api || '/api/agent';
+        this.blockName = d.block || null;
+        this.session = d.session || ('draft-' + Math.random().toString(36).slice(2, 10));
+        this.sandbox = d.sandbox || null;
+        // 期望的 stream 等級 'none' | 'tool' | 'token'; 實際生效取 min(期望, 後端允許)
+        this.stream = d.stream || 'token';
+        this.allowed = null;
+        this.warned = false;
+        // 渲染錯誤自動修正: 只修 LLM 剛寫的 block, 同一輪最多 maxFix 次,
+        // 成功渲染或用戶手動發話即歸零。data.autoFix = false 可關閉。
+        this.autoFix = d.autoFix !== false;
+        this.maxFix = d.maxFix || 2;
+        this.fixCount = 0;
+        this.lastWrote = null;
+        this.handlers = {};
+      },
+      interface: function() {
+        var self = this;
+        if(this.itf) { return this.itf; }
+        var LEVELS = {none: 0, tool: 1, token: 2};
+        function emit(ev, data) {
+          (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
+        }
+        // write_file 事件的自動反應: 寫 blocks/<name>/index.html -> 切換並渲染該 block;
+        // 寫其他檔案 (如 data/) -> 重新渲染目前 block
+        function applyEvents(events) {
+          var written = (events || []).filter(function(ev) {
+            return ev.tool === 'write_file' && !ev.error;
+          });
+          if(!written.length) { return; }
+          var blockWrites = written.filter(function(ev) {
+            return /^blocks\/([^\/]+)\/index\.html$/.test(ev.input.path);
+          });
+          if(blockWrites.length) {
+            var name = blockWrites[blockWrites.length - 1].input.path.split('/')[1];
+            self.lastWrote = name;
+            self.itf.setBlock(name);
+            if(self.sandbox) { self.sandbox.show(name); }
+          } else if(self.sandbox) {
+            self.lastWrote = self.blockName;
+            self.sandbox.refresh();
+          }
+        }
+        // 解析 SSE 回應; 逐事件 emit, resolve 成 done 事件的內容
+        function readSSE(r) {
+          var reader = r.body.getReader();
+          var dec = new TextDecoder();
+          var buf = '';
+          var result = null;
+          function handle(o) {
+            if(o.type === 'tool') { emit('tool', o); }
+            else if(o.type === 'delta') { emit('delta', o.text); }
+            else if(o.type === 'done') { result = o; }
+            else if(o.type === 'error') { throw new Error(o.error); }
+          }
+          function pump() {
+            return reader.read().then(function(x) {
+              if(x.done) {
+                if(!result) { throw new Error('stream ended unexpectedly'); }
+                return result;
+              }
+              buf += dec.decode(x.value, {stream: true});
+              var parts = buf.split('\n\n');
+              buf = parts.pop();
+              for(var i = 0; i < parts.length; i++) {
+                var data = parts[i].split('\n')
+                  .filter(function(l) { return l.slice(0, 5) === 'data:'; })
+                  .map(function(l) { return l.slice(5).trim(); })
+                  .join('');
+                if(data) { handle(JSON.parse(data)); }
+              }
+              return pump();
+            });
+          }
+          return pump();
+        }
+        this.itf = {
+          on: function(ev, fn) {
+            (self.handlers[ev] = self.handlers[ev] || []).push(fn);
+            return self.itf;
+          },
+          block: function() { return self.blockName; },
+          setBlock: function(name) {
+            self.blockName = name;
+            emit('block', name);
+          },
+          send: function(text, o) {
+            if(!(o && o.auto)) { self.fixCount = 0; }  // 用戶手動發話, 修正計數歸零
+            emit('busy', true);
+            return Promise.resolve(
+              self.allowed != null ? self.allowed
+                : self.itf.provider().then(function(j) { return j.stream || 'none'; })
+            )
+              .then(function(allowed) {
+                self.allowed = allowed;
+                var want = LEVELS[self.stream] != null ? self.stream : 'token';
+                var mode = LEVELS[want] <= LEVELS[allowed] ? want : allowed;
+                if(mode !== want && !self.warned) {
+                  self.warned = true;
+                  console.warn('[chat] stream level "' + want + '" not allowed by server (max "' + allowed + '"), falling back to "' + mode + '"');
+                }
+                return fetch(self.api + '/chat', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({
+                    message: text,
+                    block: self.blockName,
+                    session: self.blockName || self.session,
+                    stream: mode
+                  })
+                });
+              })
+              .then(function(r) {
+                var ct = r.headers.get('Content-Type') || '';
+                if(ct.indexOf('text/event-stream') >= 0) { return readSSE(r); }
+                return r.json().then(function(j) {
+                  if(!r.ok) { throw new Error(j.error || r.status); }
+                  (j.events || []).forEach(function(ev) { emit('tool', ev); });
+                  return j;
+                });
+              })
+              .then(function(j) {
+                applyEvents(j.events);
+                emit('reply', j.reply || '');
+                emit('busy', false);
+                return j;
+              })
+              .catch(function(e) {
+                emit('busy', false);
+                emit('error', e);
+                throw e;
+              });
+          },
+          reset: function() {
+            return fetch(self.api + '/reset', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({session: self.blockName || self.session})
+            }).then(function(r) { return r.json(); });
+          },
+          provider: function() {
+            return fetch(self.api + '/provider').then(function(r) { return r.json(); });
+          }
+        };
+        // 渲染錯誤自動修正 (帶 safe guard, 見 init 註解)
+        if(this.sandbox && this.sandbox.on) {
+          this.sandbox.on('rendered', function(name) {
+            if(name === self.lastWrote) { self.fixCount = 0; }
+          });
+          this.sandbox.on('render-error', function(o) {
+            if(!self.autoFix || o.name !== self.lastWrote) { return; }
+            if(self.fixCount >= self.maxFix) {
+              emit('info', '自動修正已達 ' + self.maxFix + ' 次上限,請手動處理: ' + o.message);
+              return;
+            }
+            self.fixCount++;
+            emit('info', '渲染錯誤,嘗試自動修正 (' + self.fixCount + '/' + self.maxFix + ')');
+            self.itf.send(
+              '前端渲染 blocks/' + o.name + '/index.html 時發生錯誤:\n' + o.message +
+              '\n請 read_file 檢查並修正這個 block。',
+              {auto: true}
+            ).catch(function() {});
+          });
+        }
+        return this.itf;
+      }
+    };
+  </script>
+</div>

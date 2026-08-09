@@ -1,0 +1,43 @@
+{
+  "name": "0802-agent",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "log": "tail -n 100 -f logs/server.log"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@plotdb/block": "^5.7.3",
+    "@plotdb/csscope": "^5.0.4",
+    "@plotdb/guides": "github:plotdb/guides#master",
+    "@plotdb/rescope": "^5.0.17",
+    "@plotdb/semver": "^0.0.4",
+    "@plotdb/srcbuild": "^0.0.70",
+    "express": "^5.2.1",
+    "fedep": "^1.7.4",
+    "openai": "^7.3.0",
+    "proxise": "^1.0.1"
+  },
+  "frontendDependencies": {
+    "root": "web/static/assets/lib",
+    "modules": [
+      "@plotdb/block",
+      "@plotdb/csscope",
+      "@plotdb/rescope",
+      "@plotdb/semver",
+      "proxise",
+      {
+        "name": "@plotdb/agent",
+        "dir": "block"
+      }
+    ]
+  }
+}

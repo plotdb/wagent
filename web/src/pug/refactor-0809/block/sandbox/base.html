@@ -1,0 +1,60 @@
+<div>
+  <!-- sandbox base 層: headless, 負責載入並執行 workspace block, 對外提供操作 api。 -->
+  <script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'sandbox-base',
+        version: 'main',
+        description: 'sandbox 邏輯層: 執行 workspace block、提供操作 api'
+      },
+      init: function(opt) {
+        var d = opt.data || {};
+        this.api = d.api || '/api/refactor-0809';
+        this.ws = d.workspace || '/workspace';
+        this.current = null;
+        this.handlers = {};
+      },
+      interface: function() {
+        var self = this;
+        if(this.itf) { return this.itf; }
+        function emit(ev, data) {
+          (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
+        }
+        this.itf = {
+          on: function(ev, fn) {
+            (self.handlers[ev] = self.handlers[ev] || []).push(fn);
+            return self.itf;
+          },
+          current: function() { return self.current; },
+          list: function() {
+            return fetch(self.api + '/blocks').then(function(r) { return r.json(); });
+          },
+          // 在 el 裡執行 workspace 的 blocks/<name>/index.html。
+          // 每次建新 manager 以避免 cache 到編輯前的舊版。
+          render: function(name, el) {
+            var mgr = new window.block.manager({
+              registry: function(o) {
+                if(o.type === 'block') {
+                  return self.ws + '/blocks/' + o.name + '/index.html?t=' + Date.now();
+                }
+                return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
+              }
+            });
+            return mgr.get({name: name}).then(function(cls) {
+              return cls.create({root: el});
+            });
+          },
+          // show / refresh 廣播 'show' 事件, 由 derived 視覺層決定渲染位置
+          show: function(name) {
+            self.current = name;
+            emit('show', name);
+          },
+          refresh: function() {
+            if(self.current) { emit('show', self.current); }
+          }
+        };
+        return this.itf;
+      }
+    };
+  </script>
+</div>

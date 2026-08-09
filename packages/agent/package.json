@@ -1,0 +1,17 @@
+{
+  "name": "@plotdb/agent",
+  "version": "0.0.1",
+  "description": "conversational block agent: chat + sandbox blocks with a workspace-backed llm api",
+  "main": "api/index.js",
+  "files": [
+    "api/",
+    "block/",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "express": "^5.2.1",
+    "openai": "^7.3.0"
+  }
+}
