@@ -24,6 +24,7 @@ Block 格式: 一個標準 HTML 片段,最外層一個 <div>,內含畫面 HTML�
       },
       init: function(opt) {
         // opt.root: 本 block 掛載後的 DOM 元素, 用 opt.root.querySelector 取子元素
+        // opt.data: 執行環境注入的物件 (見下方說明)
         // 回傳 Promise 即可
       },
       interface: function() {
@@ -36,11 +37,25 @@ Block 格式: 一個標準 HTML 片段,最外層一個 <div>,內含畫面 HTML�
 共通規則:
  - 開始處理前,先用一兩句話簡短說明你打算做什麼(這段文字會即時串流給用戶),然後再呼叫 tool。
  - JS 縮排兩個空白,大括號不獨立成行,避免 async/await,優先用 Promise。
- - 讀 workspace 資料檔直接用 fetch('/workspace/data/<file>')。
- - 寫 block 前若要用既有資料檔,先 read_file 確認格式。
+ - 寫 block 前若要用既有資料檔,先讀檔確認格式。
  - 用戶沒提供資料時,可自行生成合理的範例資料檔到 data/。
  - 完成後簡短告訴用戶你建立/修改了哪些檔案;頁面會自動重新渲染。
  - 回覆使用與用戶相同的語言。`;
+
+// 執行環境差異: server 模式 workspace 在後端 (檔案以 URL 提供給瀏覽器);
+// browser 模式整個 workspace 在瀏覽器內 (OPFS), block 透過注入的 loader 讀檔。
+const IO_SERVER = `檔案操作:用 read_file / write_file / list_files tool。
+
+block 內讀取資料檔:用 fetch('/workspace/data/<file>')。`;
+
+const IO_BROWSER = `檔案操作:
+ - run_shell:在 workspace 內執行 shell 指令(有 pipe、glob、重導向,以及 ls / cat / grep / find / mkdir / rm / mv / sed 等),
+   用來探索與做路徑操作。不要用它寫入檔案內容(重導向的內容會經過 shell 解析)。
+ - read_file / write_file:一律用這兩個處理檔案內容;write_file 會自動建立上層目錄。
+
+block 內讀取資料檔:用注入的 loader(workspace 在瀏覽器內,不能用 fetch 取檔):
+ - opt.data.loadText('data/sales.csv') -> Promise<string>
+ - opt.data.loadJSON('data/foo.json')  -> Promise<object>`;
 
 const DATAVIZ = `目前的任務領域是資料視覺化 — block 的目的是讀取資料檔並繪製圖表。
 
@@ -53,15 +68,16 @@ const DATAVIZ = `目前的任務領域是資料視覺化 — block 的目的是�
  - 給 canvas 的外層容器固定高度 (例如 400px),Chart 設 maintainAspectRatio: false。
  - 用 d3 時直接在 opt.root 裡建 svg,寬度可用 opt.root.clientWidth。`;
 
-// purpose: 領域 prompt (預設 DATAVIZ); block: 目前編輯對象 (null = 新增模式)
-function compose(purpose, block) {
-  let s = BASE + '\n\n' + (purpose || DATAVIZ);
+// purpose: 領域 prompt (預設 DATAVIZ); block: 目前編輯對象 (null = 新增模式);
+// mode: 'server' (預設) | 'browser'
+function compose(purpose, block, mode) {
+  let s = `${BASE}\n\n${mode === 'browser' ? IO_BROWSER : IO_SERVER}\n\n${purpose || DATAVIZ}`;
   if(!block) {
     s += '\n\n目前是「新增」模式:請為用戶建立一個新的 block (目錄名用簡短英文 kebab-case),不要修改既有 block。';
   } else {
-    s += `\n\n目前正在編輯的是 blocks/${block}/index.html。用戶的要求都是針對這個 block 的修改,除非明確說要建新的。修改前先 read_file 看目前內容。`;
+    s += `\n\n目前正在編輯的是 blocks/${block}/index.html。用戶的要求都是針對這個 block 的修改,除非明確說要建新的。修改前先讀檔看目前內容。`;
   }
   return s;
 }
 
-module.exports = {BASE, DATAVIZ, compose};
+module.exports = {BASE, DATAVIZ, IO_SERVER, IO_BROWSER, compose};

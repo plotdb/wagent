@@ -9,8 +9,28 @@
       },
       init: function(opt) {
         var d = opt.data || {};
-        this.api = d.api || '/api/refactor-0809';
+        this.api = d.api || '/api/agent';
         this.ws = d.workspace || '/workspace';
+        // d.io: browser runtime 注入 (loadText / loadJSON / listBlocks);
+        // 不給則走 server 模式, 以 URL 取 workspace 檔案
+        var ws = this.ws;
+        this.io = d.io || {
+          loadText: function(p) {
+            return fetch(ws + '/' + p + '?t=' + Date.now()).then(function(r) {
+              if(!r.ok) { throw new Error('load failed: ' + p); }
+              return r.text();
+            });
+          },
+          loadJSON: function(p) {
+            return fetch(ws + '/' + p).then(function(r) {
+              if(!r.ok) { throw new Error('load failed: ' + p); }
+              return r.json();
+            });
+          },
+          listBlocks: function() {
+            return fetch(d.api || '/api/agent' + '/blocks').then(function(r) { return r.json(); });
+          }
+        };
         this.current = null;
         this.handlers = {};
       },
@@ -26,22 +46,24 @@
             return self.itf;
           },
           current: function() { return self.current; },
-          list: function() {
-            return fetch(self.api + '/blocks').then(function(r) { return r.json(); });
-          },
+          list: function() { return self.io.listBlocks(); },
           // 在 el 裡執行 workspace 的 blocks/<name>/index.html。
-          // 每次建新 manager 以避免 cache 到編輯前的舊版。
+          // 以原始碼字串建 block class (不依賴 URL), 每次建新 manager 避免 cache 到舊版。
           render: function(name, el) {
             var mgr = new window.block.manager({
               registry: function(o) {
-                if(o.type === 'block') {
-                  return self.ws + '/blocks/' + o.name + '/index.html?t=' + Date.now();
-                }
                 return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
               }
             });
-            return mgr.get({name: name}).then(function(cls) {
-              return cls.create({root: el});
+            return self.io.loadText('blocks/' + name + '/index.html').then(function(code) {
+              var cls = new window.block['class']({
+                name: name, version: 'main', code: code, manager: mgr
+              });
+              // block 內以 opt.data 讀 workspace 資料檔
+              return cls.create({
+                root: el,
+                data: {loadText: self.io.loadText, loadJSON: self.io.loadJSON}
+              });
             }).then(function(r) {
               emit('rendered', name);
               return r;

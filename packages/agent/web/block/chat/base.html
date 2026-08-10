@@ -13,6 +13,9 @@
         this.blockName = d.block || null;
         this.session = d.session || ('draft-' + Math.random().toString(36).slice(2, 10));
         this.sandbox = d.sandbox || null;
+        // d.transport: browser runtime 注入 ({send(text, cb), reset()});
+        // 不給則走 server 模式, 直接打 api 的 /chat
+        this.transport = d.transport || null;
         // 期望的 stream 等級 'none' | 'tool' | 'token'; 實際生效取 min(期望, 後端允許)
         this.stream = d.stream || 'token';
         this.allowed = null;
@@ -98,6 +101,26 @@
           send: function(text, o) {
             if(!(o && o.auto)) { self.fixCount = 0; }  // 用戶手動發話, 修正計數歸零
             emit('busy', true);
+            // transport 注入時 (browser runtime): agent loop 在本機 worker, 不需 stream 協商
+            if(self.transport) {
+              return self.transport.send(text, {
+                block: self.blockName,
+                session: self.blockName || self.session,
+                onDelta: function(t) { emit('delta', t); },
+                onTool: function(ev) { emit('tool', ev); }
+              })
+                .then(function(j) {
+                  applyEvents(j.events);
+                  emit('reply', j.reply || '');
+                  emit('busy', false);
+                  return j;
+                })
+                .catch(function(e) {
+                  emit('busy', false);
+                  emit('error', e);
+                  throw e;
+                });
+            }
             return Promise.resolve(
               self.allowed != null ? self.allowed
                 : self.itf.provider().then(function(j) { return j.stream || 'none'; })
@@ -143,6 +166,10 @@
               });
           },
           reset: function() {
+            if(self.transport) {
+              self.transport.reset(self.blockName || self.session);
+              return Promise.resolve({ok: true});
+            }
             return fetch(self.api + '/reset', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},

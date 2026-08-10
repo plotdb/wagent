@@ -1,0 +1,66 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Block Agent (browser runtime)</title><script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script><script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script><script src="/assets/lib/proxise/main/index.min.js"></script><script src="/assets/lib/@plotdb/semver/main/index.min.js"></script><script src="/assets/lib/@plotdb/csscope/main/index.min.js"></script><script src="/assets/lib/@plotdb/rescope/main/index.min.js"></script><script src="/assets/lib/@plotdb/block/main/index.min.js"></script><link rel="stylesheet" href="/assets/lib/@plotdb/esh/main/esh-term.iife.css"><script src="/assets/lib/@plotdb/esh/main/esh-term.iife.js"></script><style type="text/css">* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, "Helvetica Neue", "PingFang TC", sans-serif; height: 100vh; display: flex; background: #f5f5f2; }
+#chat-root { width: 420px; min-width: 320px; border-right: 1px solid #ddd; background: #fff; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#sandbox-root { flex: 1; min-height: 0; padding: 20px; overflow: auto; }
+.term-pane { height: 240px; border-top: 1px solid #ddd; background: #1e1e1e; display: flex; flex-direction: column; }
+.term-bar { font: 11px Menlo, monospace; color: #aaa; padding: 4px 10px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; }
+.term-bar b { color: #ddd; font-weight: 600; }
+#term-root { flex: 1; min-height: 0; }</style></head><body><div id="chat-root"></div><div class="main"><div id="sandbox-root"></div><div class="term-pane"><div class="term-bar"><span><b>workspace shell</b> — agent 與你共用同一份 working tree</span><span id="persist-info"></span></div><div id="term-root"></div></div></div><script type="module">import {createRuntime} from '/assets/lib/@plotdb/agent/main/runtime/client.js';
+
+var params = new URLSearchParams(location.search);
+var blockName = params.get('block');  // null = 新增模式
+var API = '/api/agent';
+var BLOCKS = '/assets/lib/@plotdb/agent/main/block/';
+
+// app block (chat / sandbox 及其 base 層) 的 registry
+var paths = {
+  'chat-base': 'chat/base.html',
+  'chat': 'chat/index.html',
+  'sandbox-base': 'sandbox/base.html',
+  'sandbox': 'sandbox/index.html'
+};
+var mgr = new block.manager({
+  registry: function(o) {
+    if(o.type === 'block') {
+      if(!paths[o.name]) { return null; }
+      return BLOCKS + paths[o.name] + '?t=' + Date.now();
+    }
+    return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
+  }
+});
+
+function create(name, root, data) {
+  return mgr.get({name: name})
+    .then(function(cls) { return cls.create({root: root, data: data}); })
+    .then(function(inst) { return inst.interface(); });
+}
+
+createRuntime({api: API})
+  .then(function(rt) {
+    window.rt = rt;  // 方便在 console 觀察 (rt.sh.run / rt.io)
+    document.getElementById('persist-info').textContent = rt.sh.ready ? '' : '';
+    // 終端與 agent 共用同一個 worker (同一個 shell、同一份 workspace)
+    eshTerm.createTerminal(document.getElementById('term-root'), {
+      worker: rt.worker, home: rt.root
+    });
+    return mgr.get([{name: 'chat-base'}, {name: 'sandbox-base'}]).then(function() { return rt; });
+  })
+  .then(function(rt) {
+    return create('sandbox', document.getElementById('sandbox-root'), {api: API, io: rt.io})
+      .then(function(sb) {
+        if(blockName) { sb.show(blockName); }
+        return create('chat', document.getElementById('chat-root'), {
+          api: API, block: blockName, sandbox: sb, transport: rt.transport
+        });
+      });
+  })
+  .then(function(chat) {
+    chat.on('block', function(name) {
+      history.replaceState(null, '', location.pathname + '?block=' + encodeURIComponent(name));
+    });
+  })
+  .catch(function(e) {
+    document.body.textContent = '初始化失敗: ' + e.message;
+    console.error(e);
+  });</script></body></html>

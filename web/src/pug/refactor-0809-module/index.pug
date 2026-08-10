@@ -40,7 +40,7 @@ html
           registry: function(o) {
             if(o.type === 'block') {
               if(!paths[o.name]) { return null; }
-              return '/assets/lib/@plotdb/agent/main/' + paths[o.name] + '?t=' + Date.now();
+              return '/assets/lib/@plotdb/agent/main/block/' + paths[o.name] + '?t=' + Date.now();
             }
             return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
           }

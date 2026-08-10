@@ -46,7 +46,12 @@ module.exports = function(opt) {
     });
   }
 
-  router.use('/block', express.static(path.join(__dirname, '..', 'block')));
+  // 前端資產: block (chat / sandbox) 與 runtime (browser agent worker)
+  router.use('/block', express.static(path.join(__dirname, '..', 'web', 'block')));
+  router.use('/runtime', express.static(path.join(__dirname, '..', 'web', 'runtime')));
+
+  // browser 端 agent loop 用的 llm proxy (後端唯一暴露面)
+  router.post('/llm/:provider', require('./proxy')({log: log, models: opt.models, rate: opt.rate}));
 
   router.get('/provider', (req, res) => {
     res.json(Object.assign({stream: allowed}, llm.info()));
@@ -54,6 +59,11 @@ module.exports = function(opt) {
 
   router.get('/blocks', (req, res) => {
     res.json(env.listBlocks());
+  });
+
+  // browser runtime 取 system prompt (prompt 邏輯只留一份, 在後端)
+  router.get('/prompt', (req, res) => {
+    res.json({system: prompt.compose(purpose, req.query.block || null, req.query.mode || 'browser')});
   });
 
   router.post('/reset', (req, res) => {

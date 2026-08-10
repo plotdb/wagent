@@ -1,5 +1,20 @@
 # Change Logs
 
+## master
+
+ - features:
+   - browser runtime (Phase A): agent loop 與 tool 執行移入 Web Worker,
+     後端只剩 LLM proxy (`POST /api/agent/llm/:provider`;注入 key、model 白名單、rate limit、SSE pipe)
+   - workspace 改由 `@plotdb/esh` 0.2.0 提供 (shell + zenfs,`/home/workspace` 掛 OPFS 持久化);
+     tool 為 run_shell / read_file / write_file
+   - esh-term 與 agent 共用同一個 worker:人與 agent 操作同一份 working tree
+   - chat / sandbox block 抽象化:`data.transport` / `data.io` 有則走 browser runtime,
+     無則 fallback 後端 `/chat` 與 workspace URL — 同一套 block 前後端兩用
+   - prompt 分 server / browser 兩種 IO 模式;新增 `GET /prompt` 供 browser runtime 取用
+ - tweaks:
+   - `@plotdb/agent` 前端資產改置於 `web/{block,runtime}`,fedep 以 `dir: 'web'` 出貨
+
+
 ## v0.1.0
 
  - init release: 對話生成圖表 block 的試作 (note.md Agent Runtime 構想的 Phase 1 簡化版)
