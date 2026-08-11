@@ -26,7 +26,7 @@ export const tools = [
   },
   {
     name: 'write_file',
-    description: 'Create or overwrite a text file with exact content (parent dirs are created automatically). Always use this for file content instead of shell redirection.',
+    description: 'Create or overwrite a text file with exact content (parent dirs are created automatically). Use for new files or full rewrites; for small changes prefer edit_file. Always use this for file content instead of shell redirection.',
     parameters: {
       type: 'object',
       properties: {
@@ -36,6 +36,21 @@ export const tools = [
       required: ['path', 'content'],
       additionalProperties: false
     }
+  },
+  {
+    name: 'edit_file',
+    description: 'Replace an exact string in a file. Preferred for small changes. You must read_file first; old_string must match exactly (including whitespace) and be unique unless replace_all is set.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {type: 'string', description: 'path relative to workspace'},
+        old_string: {type: 'string', description: 'exact text to replace, with enough surrounding context to be unique'},
+        new_string: {type: 'string', description: 'replacement text'},
+        replace_all: {type: 'boolean', description: 'replace every occurrence instead of requiring uniqueness'}
+      },
+      required: ['path', 'old_string', 'new_string'],
+      additionalProperties: false
+    }
   }
 ];
 
@@ -43,9 +58,26 @@ function resolve(p) {
   return (p || '').charAt(0) === '/' ? p : `${ROOT}/${p}`;
 }
 
+// 取代邏輯與錯誤訊息 (訊息要能讓 LLM 自我修正, 故寫明匹配數與下一步)
+export function applyEdit(cur, input) {
+  const parts = cur.split(input.old_string);
+  const count = parts.length - 1;
+  if(!count) {
+    throw new Error('old_string not found. read_file again and copy the exact text (whitespace included).');
+  }
+  if(count > 1 && !input.replace_all) {
+    throw new Error(`old_string matched ${count} times. Add surrounding context to make it unique, or set replace_all.`);
+  }
+  return {next: parts.join(input.new_string), count: count};
+}
+
 // sh: esh shell (本地 createShell 或 connectShell 的 remote, 兩者同介面)
 // log: function(name, input) 供 worker 回報 tool 事件
 export function makeRunTool(sh, log) {
+  // 樂觀鎖: 記住上次交給 LLM 的內容; edit 前比對, 檔案若被外部改過 (如使用者在終端)
+  // 就拒絕並要求重讀, 避免拿舊內容覆寫
+  const lastRead = {};
+
   return function(name, input) {
     if(log) { log(name, input); }
     if(name === 'run_shell') {
@@ -58,11 +90,34 @@ export function makeRunTool(sh, log) {
       });
     }
     if(name === 'read_file') {
-      return sh.io.readFile(resolve(input.path));
+      const full = resolve(input.path);
+      return sh.io.readFile(full).then(function(c) {
+        lastRead[full] = c;
+        return c;
+      });
     }
     if(name === 'write_file') {
-      return sh.io.writeFile(resolve(input.path), input.content).then(function() {
+      const full = resolve(input.path);
+      return sh.io.writeFile(full, input.content).then(function() {
+        lastRead[full] = input.content;
         return `wrote ${input.path} (${input.content.length} chars)`;
+      });
+    }
+    if(name === 'edit_file') {
+      const full = resolve(input.path);
+      return sh.io.readFile(full).then(function(cur) {
+        if(lastRead[full] == null) {
+          throw new Error(`read_file ${input.path} first, then edit.`);
+        }
+        if(lastRead[full] !== cur) {
+          delete lastRead[full];
+          throw new Error(`${input.path} changed since you read it (edited elsewhere). read_file again before editing.`);
+        }
+        const r = applyEdit(cur, input);
+        return sh.io.writeFile(full, r.next).then(function() {
+          lastRead[full] = r.next;
+          return `edited ${input.path} (${r.count} replacement${r.count > 1 ? 's' : ''})`;
+        });
       });
     }
     return Promise.reject(new Error(`unknown tool: ${name}`));

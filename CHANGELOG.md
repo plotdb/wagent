@@ -11,6 +11,10 @@
    - chat / sandbox block 抽象化:`data.transport` / `data.io` 有則走 browser runtime,
      無則 fallback 後端 `/chat` 與 workspace URL — 同一套 block 前後端兩用
    - prompt 分 server / browser 兩種 IO 模式;新增 `GET /prompt` 供 browser runtime 取用
+   - edit_file tool(前後端兩邊):精確字串取代 + 樂觀鎖(檔案被外部改過則拒絕並要求重讀),
+     錯誤訊息含匹配數與下一步供 LLM 自我修正;小改用 edit_file、新檔或重寫用 write_file
+ - bugfixes:
+   - chat base 的 applyEvents 只認 write_file,edit_file 改完不會觸發重新渲染
  - tweaks:
    - `@plotdb/agent` 前端資產改置於 `web/{block,runtime}`,fedep 以 `dir: 'web'` 出貨
 

@@ -38,20 +38,23 @@ Block 格式: 一個標準 HTML 片段,最外層一個 <div>,內含畫面 HTML�
  - 開始處理前,先用一兩句話簡短說明你打算做什麼(這段文字會即時串流給用戶),然後再呼叫 tool。
  - JS 縮排兩個空白,大括號不獨立成行,避免 async/await,優先用 Promise。
  - 寫 block 前若要用既有資料檔,先讀檔確認格式。
+ - 修改既有檔案:小幅改動(換顏色、改文字、加一個選項)用 edit_file,只帶要改的片段,
+   old_string 需與檔案完全一致並唯一(不確定時多帶前後幾行);結構性重寫或建新檔才用 write_file。
+   edit_file 前必須先 read_file;若回報檔案已被改動,重讀後再試。
  - 用戶沒提供資料時,可自行生成合理的範例資料檔到 data/。
  - 完成後簡短告訴用戶你建立/修改了哪些檔案;頁面會自動重新渲染。
  - 回覆使用與用戶相同的語言。`;
 
 // 執行環境差異: server 模式 workspace 在後端 (檔案以 URL 提供給瀏覽器);
 // browser 模式整個 workspace 在瀏覽器內 (OPFS), block 透過注入的 loader 讀檔。
-const IO_SERVER = `檔案操作:用 read_file / write_file / list_files tool。
+const IO_SERVER = `檔案操作:用 list_files / read_file / write_file / edit_file tool。
 
 block 內讀取資料檔:用 fetch('/workspace/data/<file>')。`;
 
 const IO_BROWSER = `檔案操作:
  - run_shell:在 workspace 內執行 shell 指令(有 pipe、glob、重導向,以及 ls / cat / grep / find / mkdir / rm / mv / sed 等),
    用來探索與做路徑操作。不要用它寫入檔案內容(重導向的內容會經過 shell 解析)。
- - read_file / write_file:一律用這兩個處理檔案內容;write_file 會自動建立上層目錄。
+ - read_file / write_file / edit_file:一律用這些處理檔案內容;write_file 會自動建立上層目錄。
 
 block 內讀取資料檔:用注入的 loader(workspace 在瀏覽器內,不能用 fetch 取檔):
  - opt.data.loadText('data/sales.csv') -> Promise<string>

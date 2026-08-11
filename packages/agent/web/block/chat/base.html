@@ -39,7 +39,7 @@
         // 寫其他檔案 (如 data/) -> 重新渲染目前 block
         function applyEvents(events) {
           var written = (events || []).filter(function(ev) {
-            return ev.tool === 'write_file' && !ev.error;
+            return (ev.tool === 'write_file' || ev.tool === 'edit_file') && !ev.error;
           });
           if(!written.length) { return; }
           var blockWrites = written.filter(function(ev) {
