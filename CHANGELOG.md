@@ -1,6 +1,6 @@
 # Change Logs
 
-## master
+## v0.2.0
 
  - features:
    - browser runtime (Phase A): agent loop 與 tool 執行移入 Web Worker,
