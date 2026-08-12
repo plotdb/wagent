@@ -15,10 +15,14 @@
  - bugfixes:
    - snapshot 在背景分頁永遠不 resolve(rAF 不觸發),改與 timeout 競賽
    - snapshot 抓到過期畫面(agent 在 tool loop 中途問,但畫面要整輪結束才重繪),改成預設先重繪
-   - 失敗的 tool 在對話紀錄顯示成 ✓(事件在 dispatch 當下發, 失敗未補發)
+   - 失敗的 tool 在對話紀錄顯示成 ✓:tool 事件改分 `phase: 'start' | 'end'` 兩段
+   - 新建 block 後的 snapshot 檢查到的是**舊 block**(sandbox 要整輪結束才切換);
+     改成 tool 事件的 `end` 就即時切換並重繪,agent 檢查到的才是自己剛寫的東西
    - 沒要圖時模型會拿原始碼推測外觀還宣稱「已確認實際呈現」:tool description / prompt /
      報告內容三處收緊,`image: false` 時直接在報告裡寫明沒看到畫面
  - tweaks:
+   - `@plotdb/esh` 升到 0.3.2(OPFS 靜默資料遺失修復、redirect 回讀驗證、
+     sed `;` 多重運算式、grep `-c`/`-q` 與無符合 exit 1);API 無變動
    - `@plotdb/agent` 更名 `@plotdb/wagent`(`packages/agent` -> `packages/wagent`);
      專案定位由「對話生成圖表」升級為編輯宿主 (host),名稱與 repo 一致
    - `context/project/host.md`: Host 定義 — mounts / shell / content ops / snapshot / tools(選用)

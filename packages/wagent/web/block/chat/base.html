@@ -37,6 +37,10 @@
         }
         // write_file 事件的自動反應: 寫 blocks/<name>/index.html -> 切換並渲染該 block;
         // 寫其他檔案 (如 data/) -> 重新渲染目前 block
+        //
+        // 這件事必須在 tool 事件「當下」就做, 不能等整輪結束 — agent 寫完新 block 會馬上
+        // 呼叫 snapshot 檢查, 這時 sandbox 若還停在舊 block, 它檢查到的就是別人的畫面。
+        // 順帶: 使用者也能即時看到進度。
         function applyEvents(events) {
           var written = (events || []).filter(function(ev) {
             return (ev.tool === 'write_file' || ev.tool === 'edit_file') && !ev.error;
@@ -62,7 +66,8 @@
           var buf = '';
           var result = null;
           function handle(o) {
-            if(o.type === 'tool') { emit('tool', o); }
+            // server 模式的 SSE 只有一種 tool 事件 (執行後才發), 直接沿用
+            if(o.type === 'tool') { emit('tool', o); if(!o.error) { applyEvents([o]); } }
             else if(o.type === 'delta') { emit('delta', o.text); }
             else if(o.type === 'done') { result = o; }
             else if(o.type === 'error') { throw new Error(o.error); }
@@ -107,7 +112,15 @@
                 block: self.blockName,
                 session: self.blockName || self.session,
                 onDelta: function(t) { emit('delta', t); },
-                onTool: function(ev) { emit('tool', ev); }
+                // start 用來顯示, end 用來觸發渲染 (寫入完成才動) 與顯示失敗
+                onTool: function(ev) {
+                  if(ev.phase === 'end') {
+                    if(ev.error) { emit('tool', ev); }
+                    else { applyEvents([ev]); }
+                    return;
+                  }
+                  emit('tool', ev);
+                }
               })
                 .then(function(j) {
                   applyEvents(j.events);

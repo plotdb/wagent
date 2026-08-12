@@ -27,7 +27,12 @@ snapshot 只回報告,不出圖 — 「空白 / 沒變化」這類最常見的�
    才觸發重繪 — edit_file 後的 snapshot 看到的是改動前那一版。改成 snapshot 預設先重繪
    (`refresh()` 會同步觸發視覺層的 render,再等 `self.rendering`)
  - **失敗的 tool 顯示成 ✓**:tool 事件是在 dispatch 當下發的(為了即時顯示在做什麼),
-   失敗時沒有補發。改成失敗時再補一則 `error: true`
+   失敗時沒有補發。改成 tool 事件分 `phase: 'start' | 'end'` 兩段
+ - **新 block 的 snapshot 檢查到舊 block**(升級 0.3.2 時的端到端驗出):
+   chat 原本要整輪結束才把 sandbox 切到新寫的 block,但 agent 寫完就馬上 snapshot —
+   它「確認」的是上一個 block 的畫面。改成 tool 事件的 `end` 就即時套用(切換 / 重繪);
+   必須是 `end` 不能是 `start`,否則會在寫入完成前就重繪、讀到舊檔。
+   順帶好處:使用者也能即時看到 agent 的進度
 
 
 ## 出圖(snapdom)
@@ -110,8 +115,19 @@ API 無變動,發布後升級即可。
 **且無符合時 exit code 改回 POSIX 的 1**(先前一律 0)—— 升級後 agent 用 `$?` 判斷 grep 結果才可靠。
 另確認 `echo x > f && cat f` 這類 read-after-write 有保證(redirect 寫入被 await 到底 + 回讀驗證)。
 
-待辦:0.3.2 發布後升級,順便把 `logs/20260810-browser-runtime.md` 備註裡
-「esh 的 grep 是 JS regex 近似品,flag 未實作時回空字串」那條更新掉。另外 — **之前被清空但沒被空內容覆寫過的檔案,資料可能還在 OPFS 磁碟上**
+### 升級 0.3.2 與回歸(20260813)
+
+`^0.2.0` → `^0.3.2`(`packages/wagent` 的 peerDependencies 同步放寬,原本卡在 `^0.2.0` 會 ERESOLVE)。
+fedep 重新 pin 到 `/assets/lib/@plotdb/esh/0.3.2`。API 無變動,我們的程式一行沒改。
+
+回歸(瀏覽器實機,`/home` 掛 OPFS):
+
+ - 原始 bug:冷寫入延遲掃描 0 / 10 / 20 / 50 / 100 / 500ms **全部正確**(修正前 ≥20ms 就歸零)
+ - 冷 `sed -i` 正確;`echo x > f && cat f` 讀得到
+ - `sed -i 's/AAA/BBB/;s/CCC/DDD/'` 兩段都套用
+ - `grep -c` 回計數;無符合回 **exit 1**(POSIX)
+ - snapshot 兩種模式都正常(report `inkRatio 0.555`;image 800x479 / 23KB)
+ - 端到端建新 block:read_file → write_file → run_shell → snapshot → 回覆,圖表正確渲染另外 — **之前被清空但沒被空內容覆寫過的檔案,資料可能還在 OPFS 磁碟上**
 (失真只發生在 zenfs 的鏡像層),必要時可用原生 `navigator.storage.getDirectory()` 直讀救回。
 
 

@@ -132,20 +132,27 @@ function getSession(key, block) {
     const create = inf.provider === 'anthropic' ? createAnthropic : createOpenAI;
     const run = makeRunTool(sh, {
       log: function(name, input) {
-        post({type: 'chat-tool', id: current, tool: name, input: input, error: false});
+        // start: dispatch 當下就發, 讓畫面即時顯示「正在做什麼」
+        post({type: 'chat-tool', id: current, phase: 'start', tool: name, input: input, error: false});
       },
       host: hostCall
     });
-    // log 是在 dispatch 當下發的 (才能即時顯示「在做什麼」), 失敗時要再補一則,
-    // 否則畫面上失敗的 tool 也顯示成 ✓
+    // end: 執行完再發一則。兩段是必要的 —
+    //  - 失敗要能顯示成 ✗ (只有 start 的話全都是 ✓)
+    //  - 寫檔造成的重新渲染必須等寫入真的完成, 否則 sandbox 會讀到舊檔
     const runTool = function(name, input) {
-      return Promise.resolve().then(function() { return run(name, input); }).catch(function(e) {
+      const done = function(error, message) {
         post({
-          type: 'chat-tool', id: current, tool: name, input: input,
-          error: true, message: String((e && e.message) || e)
+          type: 'chat-tool', id: current, phase: 'end', tool: name, input: input,
+          error: !!error, message: message
         });
-        throw e;
-      });
+      };
+      return Promise.resolve().then(function() { return run(name, input); })
+        .then(function(out) { done(false); return out; })
+        .catch(function(e) {
+          done(true, String((e && e.message) || e));
+          throw e;
+        });
     };
     sessions[key] = create({
       system: system, tools: tools.concat(hostTools), runTool: runTool,

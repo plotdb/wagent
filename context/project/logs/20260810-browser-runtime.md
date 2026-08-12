@@ -67,6 +67,7 @@
 
 ## 備註
 
- - esh 的 grep 是 JS regex 近似品,`grep -c` 之類 flag 未實作(回空字串);
-   之後可在 prompt 註明可用指令集,或改用 esh 的自訂指令補
+ - ~~esh 的 grep 是 JS regex 近似品,`grep -c` 之類 flag 未實作(回空字串)~~
+   — 已於 esh 0.3.2 修正:`-c` / `-q` 支援,不支援的 flag 回 code 1 + 訊息,
+   無符合改回 POSIX 的 exit 1(見 `20260812-host-snapshot.md`)
  - 舊路徑(server 模式)全部保留:`/`、`/edit.html`、`/refactor-0809/`、`/refactor-0809-module/`
