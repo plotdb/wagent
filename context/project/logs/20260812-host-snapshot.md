@@ -30,7 +30,39 @@ snapshot 只回報告,不出圖 — 「空白 / 沒變化」這類最常見的�
    失敗時沒有補發。改成失敗時再補一則 `error: true`
 
 
-## esh 的資料遺失問題(已回報 esh,未修)
+## 出圖(snapdom)
+
+`snapshot({image: true})` 才出圖,預設只回文字報告。
+
+ - `@zumer/snapdom` 2.24.1(零依賴,155KB ESM),fedep pin 到
+   `/assets/lib/@zumer/snapdom/main/`,只在第一次要圖時才動態 import
+ - `snapdom.toCanvas(el, {width: 800, dpr: 1, backgroundColor: '#fff', fast: true})`
+   → `toDataURL('image/jpeg', 0.8)`。800px + jpeg 是為了壓 token(實測 800x479 約 23KB)
+ - canvas / svg / shadow DOM snapdom 自己處理,Chart.js 與 d3 都不必特別對待 —
+   原本規劃的「canvas 直取 / SVG 序列化」那層省下來了
+ - tool 結果的形狀擴充成:字串 或 `{text, image: {mediaType, data}}`
+   - anthropic:tool_result 的 content 支援 block 陣列,圖直接放進去
+   - openai:tool message 只吃字串,圖另外補一則 user message(`image_url` data URL)
+   - 兩邊都做 `pruneImages`:**只留最新一張**,舊圖換成 `[earlier image omitted]` —
+     否則每輪都要為同一張圖重付 token
+
+保真度實測:把截到的圖貼回頁面比對,座標軸、刻度、圖例、長條全部正確。
+
+### 兩個要記住的行為
+
+ - **背景分頁截不到圖**。snapdom 需要 renderer 有在出 frame(它會等 image decode),
+   Chrome 把背景分頁的 pipeline 凍結後就無限等。純 div 沒事,含 canvas 就卡住。
+   所以 capture 一定要有 timeout(6s),逾時回 `imageError` 說明原因,文字報告照常回。
+   端到端驗證時模型收到這個錯誤,如實說「截圖在背景分頁逾時未成功」再改用原始碼推論 — 符合預期。
+ - **不要圖的時候模型會假裝看過**。第一版 prompt 寫「圖的成本遠高於報告,不要每次都要」,
+   結果問「配色跟可讀性有沒有問題」時模型用 `image: false`,卻回「已拍快照確認實際呈現」,
+   顏色其實是從原始碼推的。三處一起收緊後改掉:tool description 寫明
+   「問到外觀就必須 image: true,拿原始碼推測外觀是錯的」、prompt 同步、
+   而且 `image: false` 時報告裡直接加一句 `you have not seen the actual rendering`。
+   修正後同樣的問題第一個 tool call 就是 `snapshot {"image": true}`。
+
+
+## esh 的資料遺失問題(已回報 esh,esh 側已修)
 
 **OPFS backend 上,檔案冷掉之後任何 shell 同步寫入(`>` 重導向、`sed -i`)→ 0 bytes,
 exit code 0、stderr 空,完全無聲。**
@@ -60,6 +92,21 @@ prompt 早就要求內容一律走 content ops,那只擋得住 agent。
 
 已寫成 task 交給 esh:`esh/context/project/tasks/opfs-sync-write-loss.md`,
 並附帶一個請求 — 即使根因要往 zenfs 追,至少要讓它出聲(寫入沒落地就回非 0 exit code)。
+
+**esh 側已找到根因並修好(0.3.2,待發布)**:根因在 zenfs 的 Async mixin,不在 esh 的寫入路徑。
+async backend 的 sync 寫入 = 寫記憶體鏡像 + 排 async replay;zenfs 用 **stack 字串比對**判斷
+某次 async 呼叫是不是 replay(是就不把參數 echo 回鏡像),但 **bundle 之後 stack 格式對不上**,
+每個 replay 都被誤判成新呼叫。sync 寫入的三段式(pre-truncate `{size:0}` → write → touch `{size:n}`)
+被 replay 時,`{size:0}` 的 echo 把鏡像的 stat size 歸零;而 `readFileSync` 按 stat size 配 buffer,
+size 0 就讀到空字串 —— 資料其實還在。所以 `sed -i` 讀到空再寫回空(這步才真的沒了)。
+我們量到的 10〜20ms 門檻就是 replay echo 相對於下一次讀的時序。
+
+esh 的修法:`hardenAsyncMounts()` 把 stack 偵測換成明確的 reentrancy flag;
+`>` / `>>` 改 async 寫 + 回讀驗證,失敗回 stderr + code 1;`writeFileSync` 寫後驗 size,不符丟 EIO。
+API 無變動,發布後升級即可。
+
+待辦:0.3.2 發布後升級。另外 — **之前被清空但沒被空內容覆寫過的檔案,資料可能還在 OPFS 磁碟上**
+(失真只發生在 zenfs 的鏡像層),必要時可用原生 `navigator.storage.getDirectory()` 直讀救回。
 
 
 ## 驗證

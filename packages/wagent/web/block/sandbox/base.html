@@ -31,6 +31,12 @@
             return fetch(d.api || '/api/agent' + '/blocks').then(function(r) { return r.json(); });
           }
         };
+        // snapdom: 出圖用 (DOM -> 圖)。canvas / svg / shadow DOM 它自己會處理,
+        // 所以 Chart.js 與 d3 都不必特別對待。只在 image: true 時才動態載入。
+        this.snapdomUrl = d.snapdom || '/assets/lib/@zumer/snapdom/main/dist/snapdom.mjs';
+        this.imageWidth = d.imageWidth || 800;   // 送進 LLM 的圖寬, 直接對應 token 成本
+        this.captureTimeout = d.captureTimeout || 6000;
+        this.snapdom = null;
         this.current = null;
         this.el = null;         // 上次渲染的容器, snapshot 的對象
         this.rendering = null;  // 進行中的渲染 promise, snapshot 要等它
@@ -69,6 +75,39 @@
           } catch(e) {
             return null;   // 跨來源圖片汙染等
           }
+        }
+
+        // 出圖: snapdom 重繪 DOM -> canvas -> jpeg。
+        // jpeg + 固定寬度是為了控制 token; 圖只在 agent 明確要求時才產生。
+        function capture() {
+          var el = self.el;
+          if(!el) { return Promise.resolve(null); }
+          var load = self.snapdom ? Promise.resolve(self.snapdom) : import(self.snapdomUrl)
+            .then(function(m) { return (self.snapdom = m.snapdom || m.default); });
+          return load
+            .then(function(snapdom) {
+              // snapdom 需要 renderer 有在出 frame (它會等 image decode);
+              // 分頁被丟到背景時 Chrome 會凍結整條 pipeline, 這裡就會無限等 —
+              // 所以一定要有 timeout, 否則整個 tool call 卡住。
+              return Promise.race([
+                snapdom.toCanvas(el, {
+                  width: self.imageWidth, dpr: 1, backgroundColor: '#ffffff', fast: true
+                }),
+                new Promise(function(_, rej) {
+                  setTimeout(function() {
+                    rej(new Error('image capture timed out — the page is probably in a background tab. the text report above is still valid.'));
+                  }, self.captureTimeout);
+                })
+              ]);
+            })
+            .then(function(canvas) {
+              var url = canvas.toDataURL('image/jpeg', 0.8);
+              return {
+                mediaType: 'image/jpeg',
+                data: url.slice(url.indexOf(',') + 1),
+                width: canvas.width, height: canvas.height
+              };
+            });
         }
 
         function inspect() {
@@ -209,6 +248,18 @@
                 requestAnimationFrame(function() { requestAnimationFrame(fire); });
                 setTimeout(fire, 300);
               });
+            }).then(function(report) {
+              if(!o.image) {
+                // 講明沒有畫面, 否則模型會拿原始碼推測外觀還宣稱「已確認實際呈現」
+                report.note = 'no image was captured (image: false) — you have not seen the actual rendering. call snapshot with image: true before describing how it looks.';
+                return {report: report};
+              }
+              return capture()
+                .then(function(image) { return {report: report, image: image}; })
+                .catch(function(e) {
+                  report.imageError = String((e && e.message) || e);
+                  return {report: report};
+                });
             });
           },
           // show / refresh 廣播 'show' 事件, 由 derived 視覺層決定渲染位置

@@ -1,5 +1,34 @@
 import {readSSE, checkResponse} from '../sse.js';
 
+// tool 結果可以是字串, 或 {text, image: {mediaType, data}} — anthropic 的 tool_result
+// content 支援 block 陣列, 圖可以直接放進去
+function toResultContent(out) {
+  if(!out || typeof out !== 'object' || !out.image) { return String(out); }
+  const blocks = [];
+  if(out.text) { blocks.push({type: 'text', text: String(out.text)}); }
+  blocks.push({
+    type: 'image',
+    source: {type: 'base64', media_type: out.image.mediaType, data: out.image.data}
+  });
+  return blocks;
+}
+
+// 舊圖留在對話裡每輪都要重付一次 token, 只保留最新一張
+function pruneImages(history) {
+  let seen = false;
+  for(let i = history.length - 1; i >= 0; i--) {
+    const c = history[i].content;
+    if(!Array.isArray(c)) { continue; }
+    for(const b of c) {
+      if(b.type !== 'tool_result' || !Array.isArray(b.content)) { continue; }
+      const idx = b.content.findIndex(function(x) { return x.type === 'image'; });
+      if(idx < 0) { continue; }
+      if(!seen) { seen = true; continue; }
+      b.content[idx] = {type: 'text', text: '[earlier image omitted]'};
+    }
+  }
+}
+
 // browser 版 provider; 介面同 openai.js (見該檔說明)
 export function createSession({system, tools, runTool, api, model}) {
   const url = (api || '/api/agent') + '/llm/anthropic';
@@ -80,7 +109,7 @@ export function createSession({system, tools, runTool, api, model}) {
         .then(function() { return runTool(b.name, b.input); })
         .then(function(out) {
           events.push({tool: b.name, input: b.input, error: false});
-          results.push({type: 'tool_result', tool_use_id: b.id, content: String(out)});
+          results.push({type: 'tool_result', tool_use_id: b.id, content: toResultContent(out)});
         })
         .catch(function(e) {
           events.push({tool: b.name, input: b.input, error: true});
@@ -98,6 +127,7 @@ export function createSession({system, tools, runTool, api, model}) {
         if(response.stop_reason === 'tool_use') {
           return runBlocks(response.content, 0, []).then(function(results) {
             history.push({role: 'user', content: results});
+            pruneImages(history);
             return step();
           });
         }

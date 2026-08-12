@@ -22,6 +22,7 @@
     "@plotdb/rescope": "^5.0.17",
     "@plotdb/semver": "^0.0.4",
     "@plotdb/srcbuild": "^0.0.70",
+    "@zumer/snapdom": "^2.24.1",
     "express": "^5.2.1",
     "fedep": "^1.7.4",
     "openai": "^7.3.0",
@@ -39,7 +40,8 @@
         "name": "@plotdb/wagent",
         "dir": "web"
       },
-      "@plotdb/esh"
+      "@plotdb/esh",
+      "@zumer/snapdom"
     ]
   }
 }

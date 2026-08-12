@@ -9,10 +9,15 @@
    - worker → 主執行緒的反向 RPC(`host-call` / `host-result`),非檔案系統的 tool 在主執行緒執行;
      `registerHost({tools, run})` 讓 host 可再註冊額外 LLM tool
    - `tools.js` 依 host 契約分區 shell / content ops / host tools
+   - snapshot 出圖(`image: true`):snapdom 把 DOM 轉圖(canvas / svg / shadow DOM 通吃),
+     800px jpeg 控 token;tool 結果可為 `{text, image}`,anthropic 走 tool_result block、
+     openai 補一則 user message,兩邊都只保留最新一張圖
  - bugfixes:
    - snapshot 在背景分頁永遠不 resolve(rAF 不觸發),改與 timeout 競賽
    - snapshot 抓到過期畫面(agent 在 tool loop 中途問,但畫面要整輪結束才重繪),改成預設先重繪
    - 失敗的 tool 在對話紀錄顯示成 ✓(事件在 dispatch 當下發, 失敗未補發)
+   - 沒要圖時模型會拿原始碼推測外觀還宣稱「已確認實際呈現」:tool description / prompt /
+     報告內容三處收緊,`image: false` 時直接在報告裡寫明沒看到畫面
  - tweaks:
    - `@plotdb/agent` 更名 `@plotdb/wagent`(`packages/agent` -> `packages/wagent`);
      專案定位由「對話生成圖表」升級為編輯宿主 (host),名稱與 repo 一致

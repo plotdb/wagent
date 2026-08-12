@@ -59,6 +59,9 @@ const IO_BROWSER = `檔案操作:
 檢查畫面:寫完或改完 block 後呼叫 snapshot 確認真的畫出來了。
 block 可能不拋錯卻是空白的(資料沒進到繪圖、容器高度為 0),這種只有 snapshot 看得到。
 報告裡 blank 為 true、或 changedSinceLast 為 false(你剛改過卻沒變),就回去查原因再修。
+預設只回文字報告,寫完檢查用這個就夠。
+但只要問題是關於「看起來如何」(配色、版面、間距、標籤重疊、好不好讀),就必須加 image: true 看圖 —
+文字報告回答不了這些,拿原始碼推測外觀是錯的。沒要圖就不要說自己看過畫面。
 
 block 內讀取資料檔:用注入的 loader(workspace 在瀏覽器內,不能用 fetch 取檔):
  - opt.data.loadText('data/sales.csv') -> Promise<string>

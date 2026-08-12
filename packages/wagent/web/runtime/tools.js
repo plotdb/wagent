@@ -62,10 +62,11 @@ export const contentTools = [
 // target / width / height / mode 為預留參數 — 現在忽略, 未來多 sandbox / 多 entry / 指定尺寸時才有值。
 export const snapshotTool = {
   name: 'snapshot',
-  description: 'Inspect what the rendered block currently looks like. Returns a cheap structured report: size, whether it looks blank, canvas/svg content signals, visible text, render errors, and how much it changed since the last snapshot. Call it after writing a block to verify it actually rendered — a block can render without throwing and still be blank.',
+  description: 'Inspect the rendered block. Without image, returns a cheap structured report: size, whether it looks blank, canvas/svg content signals, visible text, render errors, and how much it changed since the last snapshot — enough to verify a write actually rendered (a block can render without throwing and still be blank). With image:true it also returns a picture of it. You MUST set image:true whenever the question is about how it LOOKS — colors, layout, spacing, overlapping labels, readability, "does this look right". The report cannot answer those, and describing appearance from source code instead of the picture is wrong. Do not claim to have seen the rendering unless you requested the image.',
   parameters: {
     type: 'object',
     properties: {
+      image: {type: 'boolean', description: 'also return a picture of the rendered block. default false — use only when you need to judge something visual'},
       target: {type: 'string', description: 'reserved: which sandbox / entry to inspect. omit for now'},
       width: {type: 'number', description: 'reserved: render width. omit for now'},
       height: {type: 'number', description: 'reserved: render height. omit for now'},

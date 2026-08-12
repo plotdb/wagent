@@ -57,6 +57,9 @@ export function createSession({system, tools, runTool, api, model}) {
     history.push({role: 'user', content: text});
     const events = [];
 
+    // tool 結果若帶圖: openai 的 tool message 只吃字串, 圖要另外補一則 user message
+    const images = [];
+
     // 依序執行 tool calls (共用同一個 shell, 不併行)
     function runCalls(calls, i) {
       if(i >= calls.length) { return Promise.resolve(); }
@@ -69,7 +72,12 @@ export function createSession({system, tools, runTool, api, model}) {
         })
         .then(function(out) {
           events.push({tool: call.function.name, input: input, error: false});
-          history.push({role: 'tool', tool_call_id: call.id, content: String(out)});
+          const img = (out && typeof out === 'object' && out.image) ? out.image : null;
+          if(img) { images.push(img); }
+          history.push({
+            role: 'tool', tool_call_id: call.id,
+            content: img ? ((out.text || '') + '\n(image attached in the next message)') : String(out)
+          });
         })
         .catch(function(e) {
           events.push({tool: call.function.name, input: input, error: true});
@@ -78,11 +86,31 @@ export function createSession({system, tools, runTool, api, model}) {
         .then(function() { return runCalls(calls, i + 1); });
     }
 
+    // 這一輪 tool 產生的圖補成一則 user message; 同時把更早的圖換掉 —
+    // 舊圖留在對話裡每輪都要重付一次 token, 只保留最新一張
+    function flushImages() {
+      if(!images.length) { return; }
+      for(const m of history) {
+        if(m.role !== 'user' || !Array.isArray(m.content)) { continue; }
+        const idx = m.content.findIndex(function(x) { return x.type === 'image_url'; });
+        if(idx >= 0) { m.content = [{type: 'text', text: '[earlier image omitted]'}]; }
+      }
+      const content = [{type: 'text', text: 'snapshot of the rendered block:'}];
+      for(const img of images) {
+        content.push({
+          type: 'image_url',
+          image_url: {url: 'data:' + img.mediaType + ';base64,' + img.data}
+        });
+      }
+      history.push({role: 'user', content: content});
+      images.length = 0;
+    }
+
     const step = function() {
       return createMessage(cb).then(function(msg) {
         history.push(msg);
         if(msg.tool_calls && msg.tool_calls.length) {
-          return runCalls(msg.tool_calls, 0).then(step);
+          return runCalls(msg.tool_calls, 0).then(flushImages).then(step);
         }
         return {reply: msg.content || '', events: events};
       });
