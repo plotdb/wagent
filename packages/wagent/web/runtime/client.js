@@ -16,9 +16,36 @@ export function createRuntime(opt) {
   let seq = 0;
   const pending = {};
 
+  // host 提供的非檔案系統 tool。snapshot 一定要有 (見 context/project/host.md),
+  // 額外的 tool 定義會轉給 worker 併進 LLM tool 清單。
+  const host = {tools: [], run: null};
+
+  function registerHost(o) {
+    o = o || {};
+    host.tools = o.tools || [];
+    host.run = o.run || null;
+    worker.postMessage({type: 'host-tools', tools: host.tools});
+  }
+
   // worker 的 postMessage 是廣播: 一律以 id 過濾出自己的訊息
   worker.addEventListener('message', function(ev) {
     const msg = ev.data || {};
+    if(msg.type === 'host-call') {
+      // 一律回覆 (含失敗), 否則 worker 端的 agent loop 會空等到 timeout
+      const done = function(ok, payload) {
+        worker.postMessage({
+          type: 'host-result', id: msg.id, ok: ok,
+          result: ok ? payload : undefined,
+          error: ok ? undefined : String((payload && payload.message) || payload)
+        });
+      };
+      if(!host.run) { return done(false, `host tool not available: ${msg.name}`); }
+      try {
+        Promise.resolve(host.run(msg.name, msg.args || {}))
+          .then(function(r) { done(true, r); }, function(e) { done(false, e); });
+      } catch(e) { done(false, e); }
+      return;
+    }
     const p = msg.id && pending[msg.id];
     if(!p) { return; }
     if(msg.type === 'chat-delta') { return p.onDelta && p.onDelta(msg.text); }
@@ -77,6 +104,9 @@ export function createRuntime(opt) {
           });
         }
       };
-      return {worker: worker, sh: sh, io: io, transport: transport, root: o.root, workerUrl: url};
+      return {
+        worker: worker, sh: sh, io: io, transport: transport,
+        registerHost: registerHost, root: o.root, workerUrl: url
+      };
     });
 }

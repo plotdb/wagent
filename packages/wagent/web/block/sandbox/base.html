@@ -32,6 +32,10 @@
           }
         };
         this.current = null;
+        this.el = null;         // 上次渲染的容器, snapshot 的對象
+        this.rendering = null;  // 進行中的渲染 promise, snapshot 要等它
+        this.lastError = null;
+        this.lastSig = null;    // 上次 snapshot 的簽名, 用來算差異量
         this.handlers = {};
       },
       interface: function() {
@@ -40,6 +44,106 @@
         function emit(ev, data) {
           (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
         }
+
+        // canvas 取樣: 縮到 N x N 讀像素, 得到 (a) 有沒有東西 (b) 一個可比較的簽名。
+        // 對 WebGL canvas, 若未開 preserveDrawingBuffer 會讀到全透明 — 這是常見坑, 另外提示。
+        var N = 32;
+        function sampleCanvas(canvas) {
+          try {
+            var c = document.createElement('canvas');
+            c.width = c.height = N;
+            var ctx = c.getContext('2d');
+            ctx.drawImage(canvas, 0, 0, N, N);
+            var d = ctx.getImageData(0, 0, N, N).data;
+            var cells = [];
+            var lit = 0;
+            var seen = {};
+            for(var i = 0; i < N * N; i++) {
+              var a = d[i * 4 + 3];
+              var v = a ? Math.round((d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11) / 32) : -1;
+              if(a) { lit++; }
+              seen[v] = 1;
+              cells.push(v);
+            }
+            return {ratio: lit / (N * N), levels: Object.keys(seen).length, cells: cells.join(',')};
+          } catch(e) {
+            return null;   // 跨來源圖片汙染等
+          }
+        }
+
+        function inspect() {
+          var el = self.el;
+          if(!el) {
+            return {block: self.current, rendered: false, note: 'nothing has been rendered yet'};
+          }
+          var box = el.getBoundingClientRect();
+          var r = {
+            block: self.current,
+            rendered: !self.lastError,
+            size: {width: Math.round(box.width), height: Math.round(box.height)},
+            elements: el.querySelectorAll('*').length
+          };
+          if(self.lastError) { r.error = self.lastError; }
+          var text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+          if(text) { r.text = text.length > 300 ? text.slice(0, 300) + '…' : text; }
+
+          var canvases = el.querySelectorAll('canvas');
+          var svgs = el.querySelectorAll('svg');
+          var sig = null;
+          var blank = null;
+
+          if(canvases.length) {
+            var s = sampleCanvas(canvases[0]);
+            r.canvas = {count: canvases.length};
+            if(!s) {
+              r.canvas.note = 'canvas could not be sampled (tainted by cross-origin content?)';
+            } else {
+              r.canvas.inkRatio = +s.ratio.toFixed(3);
+              r.canvas.levels = s.levels;
+              sig = s.cells;
+              blank = s.ratio < 0.01 || s.levels <= 1;
+              if(s.ratio < 0.01) {
+                r.canvas.note = 'canvas reads as empty. if this is WebGL, create the context with {preserveDrawingBuffer: true} — otherwise the drawing buffer is cleared before it can be read.';
+              }
+            }
+          }
+          if(svgs.length) {
+            var shapes = svgs[0].querySelectorAll('path,rect,circle,ellipse,line,polyline,polygon,image,use');
+            var labels = svgs[0].querySelectorAll('text');
+            r.svg = {count: svgs.length, shapes: shapes.length, texts: labels.length};
+            if(blank === null) { blank = !shapes.length; }
+            if(sig === null) { sig = 'svg:' + shapes.length + ':' + labels.length; }
+          }
+          if(blank === null) {
+            blank = r.elements < 2 && !text;
+          }
+          if(sig === null) {
+            sig = 'dom:' + r.elements + ':' + text.slice(0, 120);
+          }
+          r.blank = blank;
+          if(blank) {
+            r.hint = 'the block rendered without throwing but looks empty — check the data actually reached the drawing code, and that the container has a non-zero size.';
+          }
+          if(!box.width || !box.height) {
+            r.hint = 'the container has zero width or height — give the chart/canvas wrapper an explicit size.';
+          }
+
+          // 與上次 snapshot 的差異量: 判斷「這次改動到底有沒有讓畫面變」
+          if(self.lastSig != null) {
+            r.changedSinceLast = sig !== self.lastSig;
+            if(sig.indexOf(',') >= 0 && self.lastSig.indexOf(',') >= 0) {
+              var a = sig.split(','), b = self.lastSig.split(',');
+              if(a.length === b.length) {
+                var n = 0;
+                for(var i = 0; i < a.length; i++) { if(a[i] !== b[i]) { n++; } }
+                r.changedRatio = +(n / a.length).toFixed(3);
+              }
+            }
+          }
+          self.lastSig = sig;
+          return r;
+        }
+
         this.itf = {
           on: function(ev, fn) {
             (self.handlers[ev] = self.handlers[ev] || []).push(fn);
@@ -50,12 +154,15 @@
           // 在 el 裡執行 workspace 的 blocks/<name>/index.html。
           // 以原始碼字串建 block class (不依賴 URL), 每次建新 manager 避免 cache 到舊版。
           render: function(name, el) {
+            self.el = el;
+            self.lastError = null;
             var mgr = new window.block.manager({
+              /* 每次建新 manager, 避免 cache 到舊版原始碼 */
               registry: function(o) {
                 return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
               }
             });
-            return self.io.loadText('blocks/' + name + '/index.html').then(function(code) {
+            var p = self.io.loadText('blocks/' + name + '/index.html').then(function(code) {
               var cls = new window.block['class']({
                 name: name, version: 'main', code: code, manager: mgr
               });
@@ -68,8 +175,40 @@
               emit('rendered', name);
               return r;
             }).catch(function(e) {
-              emit('render-error', {name: name, message: String((e && e.message) || e)});
+              self.lastError = String((e && e.message) || e);
+              emit('render-error', {name: name, message: self.lastError});
               throw e;
+            });
+            // snapshot 要等得到這次渲染 (agent 在 tool loop 中途就會問畫面)
+            self.rendering = p;
+            return p;
+          },
+          // 觀察通道 (見 context/project/host.md)。只回便宜的結構化報告 —
+          // 「空白 / 沒變化」這類最常見的問題不需要 vision token 就判斷得出來。
+          // o.target / width / height / mode 為預留參數, 目前忽略。
+          snapshot: function(o) {
+            o = o || {};
+            // 預設先重繪: agent 是在 tool loop 中途問畫面的, 這時畫面上還是改動前的
+            // 那一版 (chat 要整輪結束才觸發重繪), 不重繪就會回報過期的結果。
+            var ready = Promise.resolve();
+            if(o.refresh !== false && self.current) {
+              self.itf.refresh();                                  // 視覺層會同步呼叫 render
+              ready = (self.rendering || Promise.resolve()).catch(function() {});
+            }
+            return ready.then(function() {
+              // 等兩個 frame 再抓, 避免抓到還沒繪完的畫面 (Chart.js 動畫等)。
+              // 分頁在背景時 rAF 不會觸發, 所以另接一個 timeout 當保底 — 否則
+              // 使用者切走分頁時 agent 會卡在這裡等到 timeout。
+              return new Promise(function(res) {
+                var done = false;
+                var fire = function() {
+                  if(done) { return; }
+                  done = true;
+                  res(inspect());
+                };
+                requestAnimationFrame(function() { requestAnimationFrame(fire); });
+                setTimeout(fire, 300);
+              });
             });
           },
           // show / refresh 廣播 'show' 事件, 由 derived 視覺層決定渲染位置

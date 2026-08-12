@@ -56,6 +56,10 @@ const IO_BROWSER = `檔案操作:
    用來探索與做路徑操作。不要用它寫入檔案內容(重導向的內容會經過 shell 解析)。
  - read_file / write_file / edit_file:一律用這些處理檔案內容;write_file 會自動建立上層目錄。
 
+檢查畫面:寫完或改完 block 後呼叫 snapshot 確認真的畫出來了。
+block 可能不拋錯卻是空白的(資料沒進到繪圖、容器高度為 0),這種只有 snapshot 看得到。
+報告裡 blank 為 true、或 changedSinceLast 為 false(你剛改過卻沒變),就回去查原因再修。
+
 block 內讀取資料檔:用注入的 loader(workspace 在瀏覽器內,不能用 fetch 取檔):
  - opt.data.loadText('data/sales.csv') -> Promise<string>
  - opt.data.loadJSON('data/foo.json')  -> Promise<object>`;

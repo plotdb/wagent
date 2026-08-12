@@ -1,9 +1,10 @@
-// browser runtime 的 tool 集: 一個 shell + 一對內容讀寫。
-//  - 路徑類操作 (mkdir / rm / mv / ls) 走 run_shell, 不另開 tool
-//  - 任意內容 (html / csv) 一律走 read_file / write_file, 不經 shell parser
+// browser runtime 的 tool 集。依 host 契約 (context/project/host.md) 分區:
+//  - shell:       路徑操作與探索。內容不走這裡 (會經 shell parser)
+//  - content ops: 內容讀寫, 含樂觀鎖。固定三個, 不隨 host 變動
+//  - host tools:  非檔案系統的操作。snapshot 為必要成員, 其餘由 host 自行註冊
 export const ROOT = '/home/workspace';
 
-export const tools = [
+export const shellTools = [
   {
     name: 'run_shell',
     description: 'Run a shell command in the workspace (POSIX-like shell with pipes, glob, redirects; ls/cat/grep/find/mkdir/rm/mv/sed etc). Use for exploring and for path operations. Do NOT use it to write file content — use write_file instead.',
@@ -13,7 +14,10 @@ export const tools = [
       required: ['command'],
       additionalProperties: false
     }
-  },
+  }
+];
+
+export const contentTools = [
   {
     name: 'read_file',
     description: 'Read a text file. Call this before editing an existing file.',
@@ -54,6 +58,25 @@ export const tools = [
   }
 ];
 
+// snapshot: 觀察通道, 由 host 實作 (渲染參數是 host 的 session 狀態, 不在 fs 裡)。
+// target / width / height / mode 為預留參數 — 現在忽略, 未來多 sandbox / 多 entry / 指定尺寸時才有值。
+export const snapshotTool = {
+  name: 'snapshot',
+  description: 'Inspect what the rendered block currently looks like. Returns a cheap structured report: size, whether it looks blank, canvas/svg content signals, visible text, render errors, and how much it changed since the last snapshot. Call it after writing a block to verify it actually rendered — a block can render without throwing and still be blank.',
+  parameters: {
+    type: 'object',
+    properties: {
+      target: {type: 'string', description: 'reserved: which sandbox / entry to inspect. omit for now'},
+      width: {type: 'number', description: 'reserved: render width. omit for now'},
+      height: {type: 'number', description: 'reserved: render height. omit for now'},
+      mode: {type: 'string', description: 'reserved: "live" or "fresh". omit for now'}
+    },
+    additionalProperties: false
+  }
+};
+
+export const tools = shellTools.concat(contentTools, [snapshotTool]);
+
 function resolve(p) {
   return (p || '').charAt(0) === '/' ? p : `${ROOT}/${p}`;
 }
@@ -72,8 +95,12 @@ export function applyEdit(cur, input) {
 }
 
 // sh: esh shell (本地 createShell 或 connectShell 的 remote, 兩者同介面)
-// log: function(name, input) 供 worker 回報 tool 事件
-export function makeRunTool(sh, log) {
+// opt.log:  function(name, input) 供 worker 回報 tool 事件
+// opt.host: function(name, args) -> Promise<string>; shell / content 以外的 tool 一律轉給它
+export function makeRunTool(sh, opt) {
+  opt = opt || {};
+  const log = opt.log;
+  const host = opt.host;
   // 樂觀鎖: 記住上次交給 LLM 的內容; edit 前比對, 檔案若被外部改過 (如使用者在終端)
   // 就拒絕並要求重讀, 避免拿舊內容覆寫
   const lastRead = {};
@@ -120,6 +147,8 @@ export function makeRunTool(sh, log) {
         });
       });
     }
+    // 其餘一律是 host tool (snapshot 與 host 自行註冊的)
+    if(host) { return host(name, input); }
     return Promise.reject(new Error(`unknown tool: ${name}`));
   };
 }

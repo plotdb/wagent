@@ -79,6 +79,15 @@ html
         .then(function(rt) {
           return create('sandbox', document.getElementById('sandbox-root'), {api: API, io: rt.io})
             .then(function(sb) {
+              // sandbox 即 host 的觀察通道: 把 snapshot 交給 agent
+              rt.registerHost({
+                run: function(name, args) {
+                  if(name !== 'snapshot') {
+                    return Promise.reject(new Error('unknown host tool: ' + name));
+                  }
+                  return sb.snapshot(args).then(function(r) { return JSON.stringify(r, null, 1); });
+                }
+              });
               if(blockName) { sb.show(blockName); }
               return create('chat', document.getElementById('chat-root'), {
                 api: API, block: blockName, sandbox: sb, transport: rt.transport
