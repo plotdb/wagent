@@ -67,6 +67,37 @@ snapshot 只回報告,不出圖 — 「空白 / 沒變化」這類最常見的�
    修正後同樣的問題第一個 tool call 就是 `snapshot {"image": true}`。
 
 
+## fresh 模式與 block 視覺協定(20260813)
+
+snapshot 的預留參數開放,並把 block 的選用能力接上 `@plotdb/block` 既有的 host / client。
+
+ - `mode: 'fresh'` + `width` / `height`:在畫面外(`position:fixed; left:-99999px`)以指定尺寸
+   另外掛一份、截完 detach 丟掉。不動使用者當下的畫面,尺寸確定、可重現 — responsive 檢查靠它
+ - `time`:配合 block 的 `seek` 凍結到指定時間再看
+ - 差異量改**分情境記錄**(`live:<block>`、`fresh:<w>x<h>:<block>`);不同尺寸互相比較沒有意義
+ - host bid = `@plotdb/wagent`。host → client 提供 `{loadText, loadJSON, mode}`;
+   client → host 回報 `capture` / `pause` / `seek` / `state`,全部選用,沒有就走泛用路徑
+ - `capture` 存在就優先用(WebGL 自己 readPixels 最準);`state` 併進 report 的 `blockState`
+
+驗證(自寫兩個測試 block,驗完刪掉):
+
+ - 同步繪圖 block:fresh 375x400 與 1200x400 都正確渲染(`inkRatio 1`,色階數不同),
+   重跑同尺寸 `changedRatio: 0`,期間 live 的 block 沒被動到
+ - client 測試 block:`pause` 被呼叫到(`paused: true`)、`seek(4)` 讓畫面真的變了
+   (`changedRatio 0.164`)、`state` 出現在 `blockState`、`hostSeen: true` 證明 host interface 有到 block、
+   `capture` 回的 40x20 圖取代了 snapdom 的輸出 — 優先序正確
+
+### 又一個「觀察通道會說謊」的案例
+
+fresh 模式在**背景分頁**會渲染出空白:Chart.js 靠 rAF 畫圖,而 Chrome 凍結背景分頁的
+rendering pipeline(實測 600ms 內 rAF 觸發 0 次)。原本的報告會說
+「block 沒拋錯但畫面空白 — 檢查資料有沒有進到繪圖」,**這是誤診,會把 agent 送去修一個不存在的 bug**。
+
+改成 `settle()` 回報 rAF 到底有沒有觸發,空白時依此給不同的 hint:
+rAF 沒跑就直說「分頁在背景、renderer 被凍結,這很可能不是 block 的問題,不要據此修改」。
+誤導性的診斷比沒有診斷更糟 — 這已經是這個通道上第四個同類問題(rAF 卡死、畫面過期、看錯 block、誤診)。
+
+
 ## esh 的資料遺失問題(已回報 esh,esh 側已修)
 
 **OPFS backend 上,檔案冷掉之後任何 shell 同步寫入(`>` 重導向、`sed -i`)→ 0 bytes,

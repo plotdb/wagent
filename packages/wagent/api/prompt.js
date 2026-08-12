@@ -34,6 +34,21 @@ Block 格式: 一個標準 HTML 片段,最外層一個 <div>,內含畫面 HTML�
   </script>
 </div>
 
+會動的 block(動畫、遊戲、模擬)請多實作 client,讓執行環境檢查得到畫面:
+
+    pkg: {host: {name: '@plotdb/wagent'}, ...},
+    client: function() {
+      return {
+        pause: function() {},        // 停掉 rAF 迴圈, 讓畫面可重現
+        seek: function(t) {},        // 跳到指定時間/影格
+        state: function() {},        // 回結構化狀態 (分數、關卡、選取項目…), 比看圖便宜也可靠
+        capture: function() {}       // 選用: 自己截圖, 回 canvas / blob / dataURL
+      };
+    }
+
+沒實作也能運作(執行環境會自己重繪出圖),但動畫類的畫面就無法穩定檢查。
+WebGL 一定要用 getContext('webgl2', {preserveDrawingBuffer: true}),否則畫面讀出來會是全空白。
+
 共通規則:
  - 開始處理前,先用一兩句話簡短說明你打算做什麼(這段文字會即時串流給用戶),然後再呼叫 tool。
  - JS 縮排兩個空白,大括號不獨立成行,避免 async/await,優先用 Promise。
@@ -62,6 +77,8 @@ block 可能不拋錯卻是空白的(資料沒進到繪圖、容器高度為 0),
 預設只回文字報告,寫完檢查用這個就夠。
 但只要問題是關於「看起來如何」(配色、版面、間距、標籤重疊、好不好讀),就必須加 image: true 看圖 —
 文字報告回答不了這些,拿原始碼推測外觀是錯的。沒要圖就不要說自己看過畫面。
+要看窄螢幕/特定尺寸下的表現,用 mode: 'fresh' 加 width / height,它會在畫面外另外繪一份,
+不會干擾用戶當下看到的東西。
 
 block 內讀取資料檔:用注入的 loader(workspace 在瀏覽器內,不能用 fetch 取檔):
  - opt.data.loadText('data/sales.csv') -> Promise<string>

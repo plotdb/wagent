@@ -31,26 +31,64 @@
             return fetch(d.api || '/api/agent' + '/blocks').then(function(r) { return r.json(); });
           }
         };
-        // snapdom: 出圖用 (DOM -> 圖)。canvas / svg / shadow DOM 它自己會處理,
-        // 所以 Chart.js 與 d3 都不必特別對待。只在 image: true 時才動態載入。
+        // snapdom: 出圖的泛用路徑 (DOM -> 圖)。canvas / svg / shadow DOM 它自己會處理,
+        // 所以 Chart.js 與 d3 都不必特別對待。只在需要出圖時才動態載入。
         this.snapdomUrl = d.snapdom || '/assets/lib/@zumer/snapdom/main/dist/snapdom.mjs';
         this.imageWidth = d.imageWidth || 800;   // 送進 LLM 的圖寬, 直接對應 token 成本
         this.captureTimeout = d.captureTimeout || 6000;
         this.snapdom = null;
         this.current = null;
         this.el = null;         // 上次渲染的容器, snapshot 的對象
+        this.inst = null;       // 上次渲染的 block instance (取 client 用)
         this.rendering = null;  // 進行中的渲染 promise, snapshot 要等它
         this.lastError = null;
-        this.lastSig = null;    // 上次 snapshot 的簽名, 用來算差異量
+        this.sigs = {};         // 各 snapshot 情境的上次簽名, 用來算差異量
         this.handlers = {};
       },
       interface: function() {
         var self = this;
         if(this.itf) { return this.itf; }
+        // 這個 sandbox 作為 host 的識別碼。block 若在 pkg.host 宣告它,
+        // 就能在 client() 回報 capture / pause / seek / state 等能力 (全部選用)。
+        var HOST_BID = '@plotdb/wagent';
+
         function emit(ev, data) {
           (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
         }
 
+        // ── host / client ────────────────────────────────────────────────
+        // host -> client: 提供給 block 的服務
+        function hostObject() {
+          return {
+            bid: HOST_BID,
+            interface: function() {
+              return {
+                loadText: self.io.loadText,
+                loadJSON: self.io.loadJSON,
+                mode: 'edit'
+              };
+            }
+          };
+        }
+
+        // client -> host: block 自報的選用能力。沒宣告 host、沒實作 client 都是正常情況,
+        // 一律 fallback 到 host 自己的泛用做法 (snapdom 出圖)。
+        function clientOf(inst) {
+          if(!inst || typeof inst.client !== 'function') { return null; }
+          try {
+            var c = inst.client({bid: HOST_BID});
+            return (c && typeof c === 'object') ? c : null;
+          } catch(e) { return null; }
+        }
+
+        function callClient(c, name, arg) {
+          if(!c || typeof c[name] !== 'function') { return Promise.resolve(null); }
+          return Promise.resolve()
+            .then(function() { return c[name](arg); })
+            .catch(function(e) { return {error: String((e && e.message) || e)}; });
+        }
+
+        // ── 取樣與出圖 ────────────────────────────────────────────────────
         // canvas 取樣: 縮到 N x N 讀像素, 得到 (a) 有沒有東西 (b) 一個可比較的簽名。
         // 對 WebGL canvas, 若未開 preserveDrawingBuffer 會讀到全透明 — 這是常見坑, 另外提示。
         var N = 32;
@@ -77,47 +115,88 @@
           }
         }
 
-        // 出圖: snapdom 重繪 DOM -> canvas -> jpeg。
-        // jpeg + 固定寬度是為了控制 token; 圖只在 agent 明確要求時才產生。
-        function capture() {
-          var el = self.el;
-          if(!el) { return Promise.resolve(null); }
-          var load = self.snapdom ? Promise.resolve(self.snapdom) : import(self.snapdomUrl)
-            .then(function(m) { return (self.snapdom = m.snapdom || m.default); });
-          return load
-            .then(function(snapdom) {
-              // snapdom 需要 renderer 有在出 frame (它會等 image decode);
-              // 分頁被丟到背景時 Chrome 會凍結整條 pipeline, 這裡就會無限等 —
-              // 所以一定要有 timeout, 否則整個 tool call 卡住。
-              return Promise.race([
-                snapdom.toCanvas(el, {
-                  width: self.imageWidth, dpr: 1, backgroundColor: '#ffffff', fast: true
-                }),
-                new Promise(function(_, rej) {
-                  setTimeout(function() {
-                    rej(new Error('image capture timed out — the page is probably in a background tab. the text report above is still valid.'));
-                  }, self.captureTimeout);
-                })
-              ]);
-            })
-            .then(function(canvas) {
-              var url = canvas.toDataURL('image/jpeg', 0.8);
-              return {
-                mediaType: 'image/jpeg',
-                data: url.slice(url.indexOf(',') + 1),
-                width: canvas.width, height: canvas.height
-              };
-            });
+        function withTimeout(p, ms, msg) {
+          return Promise.race([
+            p,
+            new Promise(function(_, rej) { setTimeout(function() { rej(new Error(msg)); }, ms); })
+          ]);
         }
 
-        function inspect() {
-          var el = self.el;
+        function canvasToImage(canvas) {
+          var url = canvas.toDataURL('image/jpeg', 0.8);
+          return {
+            mediaType: 'image/jpeg',
+            data: url.slice(url.indexOf(',') + 1),
+            width: canvas.width, height: canvas.height
+          };
+        }
+
+        // block 自報的 capture 可以回 canvas / blob / dataURL, 統一轉成 {mediaType, data}
+        function normalizeImage(v) {
+          if(!v) { return null; }
+          if(v.mediaType && v.data) { return v; }
+          if(typeof HTMLCanvasElement !== 'undefined' && v instanceof HTMLCanvasElement) {
+            return canvasToImage(v);
+          }
+          if(typeof v === 'string' && v.slice(0, 5) === 'data:') {
+            var i = v.indexOf(',');
+            return {mediaType: v.slice(5, v.indexOf(';')), data: v.slice(i + 1)};
+          }
+          if(typeof Blob !== 'undefined' && v instanceof Blob) {
+            return new Promise(function(res, rej) {
+              var fr = new FileReader();
+              fr.onload = function() {
+                var u = String(fr.result);
+                res({mediaType: v.type || 'image/png', data: u.slice(u.indexOf(',') + 1)});
+              };
+              fr.onerror = function() { rej(new Error('failed to read captured blob')); };
+              fr.readAsDataURL(v);
+            });
+          }
+          return null;
+        }
+
+        // 出圖: 先問 block 自己 (它最知道怎麼截, 例如 WebGL 直接 readPixels),
+        // 沒有就用 snapdom 重繪 DOM -> canvas -> jpeg。
+        function capture(el, inst) {
+          if(!el) { return Promise.resolve(null); }
+          var c = clientOf(inst);
+          var own = (c && typeof c.capture === 'function')
+            ? withTimeout(
+                Promise.resolve().then(function() { return c.capture({width: self.imageWidth}); }),
+                self.captureTimeout, 'the block\'s own capture() timed out'
+              ).then(normalizeImage)
+            : Promise.resolve(null);
+
+          return own.then(function(img) {
+            if(img) { return img; }
+            var load = self.snapdom ? Promise.resolve(self.snapdom) : import(self.snapdomUrl)
+              .then(function(m) { return (self.snapdom = m.snapdom || m.default); });
+            return load
+              .then(function(snapdom) {
+                // snapdom 需要 renderer 有在出 frame (它會等 image decode);
+                // 分頁被丟到背景時 Chrome 會凍結整條 pipeline, 這裡就會無限等 —
+                // 所以一定要有 timeout, 否則整個 tool call 卡住。
+                return withTimeout(
+                  snapdom.toCanvas(el, {
+                    width: self.imageWidth, dpr: 1, backgroundColor: '#ffffff', fast: true
+                  }),
+                  self.captureTimeout,
+                  'image capture timed out — the page is probably in a background tab. the text report above is still valid.'
+                );
+              })
+              .then(canvasToImage);
+          });
+        }
+
+        // ── 觀察 ──────────────────────────────────────────────────────────
+        function inspect(el, sigKey, name, env) {
           if(!el) {
-            return {block: self.current, rendered: false, note: 'nothing has been rendered yet'};
+            return {block: name, rendered: false, note: 'nothing has been rendered yet'};
           }
           var box = el.getBoundingClientRect();
           var r = {
-            block: self.current,
+            block: name,
             rendered: !self.lastError,
             size: {width: Math.round(box.width), height: Math.round(box.height)},
             elements: el.querySelectorAll('*').length
@@ -161,17 +240,22 @@
           }
           r.blank = blank;
           if(blank) {
-            r.hint = 'the block rendered without throwing but looks empty — check the data actually reached the drawing code, and that the container has a non-zero size.';
+            // 背景分頁的空白不是 block 的錯 — 講清楚, 否則 agent 會去修一個不存在的 bug
+            r.hint = (env && env.rafFired === false)
+              ? 'the page is in a background tab so the browser froze its rendering pipeline — anything drawn via requestAnimationFrame (Chart.js animations, games) has not painted yet. this is very likely NOT a bug in the block; do not "fix" it based on this. ask the user to bring the tab to the front if you need to see it.'
+              : 'the block rendered without throwing but looks empty — check the data actually reached the drawing code, and that the container has a non-zero size.';
           }
           if(!box.width || !box.height) {
             r.hint = 'the container has zero width or height — give the chart/canvas wrapper an explicit size.';
           }
 
-          // 與上次 snapshot 的差異量: 判斷「這次改動到底有沒有讓畫面變」
-          if(self.lastSig != null) {
-            r.changedSinceLast = sig !== self.lastSig;
-            if(sig.indexOf(',') >= 0 && self.lastSig.indexOf(',') >= 0) {
-              var a = sig.split(','), b = self.lastSig.split(',');
+          // 與上次同情境 snapshot 的差異量: 判斷「這次改動到底有沒有讓畫面變」。
+          // 分情境記 (live / 各種尺寸的 fresh), 不同尺寸互相比較沒有意義。
+          var last = self.sigs[sigKey];
+          if(last != null) {
+            r.changedSinceLast = sig !== last;
+            if(sig.indexOf(',') >= 0 && last.indexOf(',') >= 0) {
+              var a = sig.split(','), b = last.split(',');
               if(a.length === b.length) {
                 var n = 0;
                 for(var i = 0; i < a.length; i++) { if(a[i] !== b[i]) { n++; } }
@@ -179,9 +263,131 @@
               }
             }
           }
-          self.lastSig = sig;
+          self.sigs[sigKey] = sig;
           return r;
         }
+
+        // 等畫面繪完: 兩個 frame + timeout 保底。
+        // 分頁在背景時 rAF 不會觸發, 沒有保底 agent 就會卡在這裡。
+        // 回報 rAF 到底有沒有觸發: 分頁在背景時 Chrome 會凍結整條 rendering pipeline,
+        // rAF 不跑 -> 用 rAF 畫圖的東西 (Chart.js 動畫等) 根本不會出現。
+        // 沒有這個資訊, 背景分頁的空白畫面會被誤診成「block 有 bug」。
+        function frames() {
+          return new Promise(function(res) {
+            var done = false;
+            var fire = function(raf) {
+              if(done) { return; }
+              done = true;
+              res(!!raf);
+            };
+            requestAnimationFrame(function() { requestAnimationFrame(function() { fire(true); }); });
+            setTimeout(function() { fire(false); }, 300);
+          });
+        }
+
+        // 剛掛上的 block 通常還在非同步載資料, 畫完也還有動畫 (Chart.js 預設 1s),
+        // 只等兩個 frame 會抓到空白。有 canvas 就輪詢到真的有畫東西為止 (或耗盡預算)。
+        function settle(el, budget) {
+          return frames().then(function(rafFired) {
+            var canvas = el && el.querySelector('canvas');
+            if(!canvas) { return {rafFired: rafFired}; }
+            var deadline = Date.now() + (budget || 0);
+            var poll = function() {
+              var s = sampleCanvas(canvas);
+              if(!s || s.ratio > 0.005 || Date.now() > deadline) { return {rafFired: rafFired}; }
+              return new Promise(function(r) { setTimeout(r, 100); }).then(poll);
+            };
+            return poll();
+          });
+        }
+
+        // 載入並執行 workspace 的 block。每次建新 manager 避免 cache 到舊版原始碼。
+        function mount(name, el) {
+          var mgr = new window.block.manager({
+            registry: function(o) {
+              return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
+            }
+          });
+          return self.io.loadText('blocks/' + name + '/index.html').then(function(code) {
+            var cls = new window.block['class']({
+              name: name, version: 'main', code: code, manager: mgr
+            });
+            return cls.create({
+              root: el,
+              // block 內以 opt.data 讀 workspace 資料檔; host 另外提供同一組服務
+              data: {loadText: self.io.loadText, loadJSON: self.io.loadJSON},
+              host: hostObject()
+            });
+          });
+        }
+
+        // mode: 'fresh' — 在畫面外以指定尺寸另外掛一份, 截完就丟。
+        // 用於 responsive 檢查與可重現的前後對照, 不動使用者當下看到的畫面。
+        function snapshotFresh(o) {
+          var name = o.target || self.current;
+          if(!name) {
+            return Promise.resolve({report: {rendered: false, note: 'no block to render'}});
+          }
+          var w = o.width || 375;
+          var h = o.height || 600;
+          var holder = document.createElement('div');
+          holder.style.cssText = 'position:fixed;left:-99999px;top:0;overflow:hidden;' +
+            'width:' + w + 'px;height:' + h + 'px';
+          document.body.appendChild(holder);
+          var inst = null;
+          var prevError = self.lastError;
+          self.lastError = null;
+          return mount(name, holder)
+            .then(function(r) {
+              inst = r;
+              var c = clientOf(inst);
+              return callClient(c, 'pause')
+                .then(function() { return o.time != null ? callClient(c, 'seek', o.time) : null; });
+            })
+            .then(function() { return settle(holder, 2000); })
+            .then(function(env) {
+              var report = inspect(holder, 'fresh:' + w + 'x' + h + ':' + name, name, env);
+              report.mode = 'fresh';
+              report.renderedAt = {width: w, height: h};
+              return withState(report, clientOf(inst));
+            })
+            .then(function(report) {
+              if(!o.image) {
+                report.note = NO_IMAGE_NOTE;
+                return {report: report};
+              }
+              return capture(holder, inst)
+                .then(function(image) { return {report: report, image: image}; })
+                .catch(function(e) {
+                  report.imageError = String((e && e.message) || e);
+                  return {report: report};
+                });
+            })
+            .catch(function(e) {
+              return {report: {
+                block: name, mode: 'fresh', rendered: false,
+                error: String((e && e.message) || e)
+              }};
+            })
+            .then(function(out) {
+              if(inst && typeof inst.detach === 'function') {
+                try { inst.detach(); } catch(e) { /* 清掉就好, 失敗不影響結果 */ }
+              }
+              holder.remove();
+              self.lastError = prevError;
+              return out;
+            });
+        }
+
+        function withState(report, c) {
+          if(!c || typeof c.state !== 'function') { return Promise.resolve(report); }
+          return callClient(c, 'state').then(function(s) {
+            if(s != null) { report.blockState = s; }
+            return report;
+          });
+        }
+
+        var NO_IMAGE_NOTE = 'no image was captured (image: false) — you have not seen the actual rendering. call snapshot with image: true before describing how it looks.';
 
         this.itf = {
           on: function(ev, fn) {
@@ -190,27 +396,12 @@
           },
           current: function() { return self.current; },
           list: function() { return self.io.listBlocks(); },
-          // 在 el 裡執行 workspace 的 blocks/<name>/index.html。
-          // 以原始碼字串建 block class (不依賴 URL), 每次建新 manager 避免 cache 到舊版。
           render: function(name, el) {
             self.el = el;
+            self.inst = null;
             self.lastError = null;
-            var mgr = new window.block.manager({
-              /* 每次建新 manager, 避免 cache 到舊版原始碼 */
-              registry: function(o) {
-                return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
-              }
-            });
-            var p = self.io.loadText('blocks/' + name + '/index.html').then(function(code) {
-              var cls = new window.block['class']({
-                name: name, version: 'main', code: code, manager: mgr
-              });
-              // block 內以 opt.data 讀 workspace 資料檔
-              return cls.create({
-                root: el,
-                data: {loadText: self.io.loadText, loadJSON: self.io.loadJSON}
-              });
-            }).then(function(r) {
+            var p = mount(name, el).then(function(r) {
+              self.inst = r;
               emit('rendered', name);
               return r;
             }).catch(function(e) {
@@ -222,45 +413,49 @@
             self.rendering = p;
             return p;
           },
-          // 觀察通道 (見 context/project/host.md)。只回便宜的結構化報告 —
-          // 「空白 / 沒變化」這類最常見的問題不需要 vision token 就判斷得出來。
-          // o.target / width / height / mode 為預留參數, 目前忽略。
+          // 觀察通道 (見 context/project/host.md)。
+          // 預設只回便宜的結構化報告 — 「空白 / 沒變化」不需要 vision token 就判斷得出來。
+          //  - o.image: 是否出圖
+          //  - o.mode:  'live' (預設, 使用者當下看到的) | 'fresh' (畫面外以指定尺寸重繪一份)
+          //  - o.width / o.height: fresh 模式的尺寸
+          //  - o.time:  有實作 seek 的 block, 跳到指定時間再看
+          //  - o.target: 指定 block (預設為目前顯示的那個)
           snapshot: function(o) {
             o = o || {};
-            // 預設先重繪: agent 是在 tool loop 中途問畫面的, 這時畫面上還是改動前的
-            // 那一版 (chat 要整輪結束才觸發重繪), 不重繪就會回報過期的結果。
+            if(o.mode === 'fresh') { return snapshotFresh(o); }
+
+            // live: 先重繪再看。agent 是在 tool loop 中途問畫面的, 這時畫面上可能還是
+            // 改動前的那一版, 不重繪就會回報過期的結果。
             var ready = Promise.resolve();
             if(o.refresh !== false && self.current) {
               self.itf.refresh();                                  // 視覺層會同步呼叫 render
               ready = (self.rendering || Promise.resolve()).catch(function() {});
             }
-            return ready.then(function() {
-              // 等兩個 frame 再抓, 避免抓到還沒繪完的畫面 (Chart.js 動畫等)。
-              // 分頁在背景時 rAF 不會觸發, 所以另接一個 timeout 當保底 — 否則
-              // 使用者切走分頁時 agent 會卡在這裡等到 timeout。
-              return new Promise(function(res) {
-                var done = false;
-                var fire = function() {
-                  if(done) { return; }
-                  done = true;
-                  res(inspect());
-                };
-                requestAnimationFrame(function() { requestAnimationFrame(fire); });
-                setTimeout(fire, 300);
-              });
-            }).then(function(report) {
-              if(!o.image) {
-                // 講明沒有畫面, 否則模型會拿原始碼推測外觀還宣稱「已確認實際呈現」
-                report.note = 'no image was captured (image: false) — you have not seen the actual rendering. call snapshot with image: true before describing how it looks.';
-                return {report: report};
-              }
-              return capture()
-                .then(function(image) { return {report: report, image: image}; })
-                .catch(function(e) {
-                  report.imageError = String((e && e.message) || e);
+            return ready
+              .then(function() {
+                var c = clientOf(self.inst);
+                if(o.time == null) { return null; }
+                return callClient(c, 'pause').then(function() { return callClient(c, 'seek', o.time); });
+              })
+              .then(function() { return settle(self.el, 2000); })
+              .then(function(env) {
+                var report = inspect(self.el, 'live:' + self.current, self.current, env);
+                report.mode = 'live';
+                return withState(report, clientOf(self.inst));
+              })
+              .then(function(report) {
+                if(!o.image) {
+                  // 講明沒有畫面, 否則模型會拿原始碼推測外觀還宣稱「已確認實際呈現」
+                  report.note = NO_IMAGE_NOTE;
                   return {report: report};
-                });
-            });
+                }
+                return capture(self.el, self.inst)
+                  .then(function(image) { return {report: report, image: image}; })
+                  .catch(function(e) {
+                    report.imageError = String((e && e.message) || e);
+                    return {report: report};
+                  });
+              });
           },
           // show / refresh 廣播 'show' 事件, 由 derived 視覺層決定渲染位置
           show: function(name) {

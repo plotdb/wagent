@@ -62,16 +62,18 @@ esh 實例,負責路徑操作與探索(`ls` / `cat` / `grep` / `find` / `mkdir` 
 
 **必要。** 「這個 host 是不是 agent-compatible」就是靠它定義。
 
-    snapshot({target, width, height, mode, image}) -> {report, image?}
+    snapshot({image, mode, width, height, time, target}) -> {report, image?}
 
  - `report`(必回):空白偵測、渲染錯誤、與上一張的差異量。便宜,不花 vision token。
- - `image`(預設 false):要圖才給圖。host 內部可能來自 block 自報的 capture,或泛用的 DOM→圖(snapdom)。
+ - `image`(預設 false):要圖才給圖。來源優先序 = block 自報的 `capture` > 泛用的 DOM→圖(snapdom)。
+ - `mode`:`live`(預設,使用者當下看到的)/ `fresh`(畫面外以指定尺寸另外掛一份,截完就丟)
+ - `width` / `height`:fresh 模式的尺寸,用來做 responsive 檢查
+ - `time`:有實作 `seek` 的 block,凍結並跳到指定時間再看
+ - `target`:指定 block(預設為目前顯示的那個)
 
-參數空間現在就預留、實作可先忽略:
-
- - `target` — 未來:哪個 sandbox / 哪個 entry(block 可能有 `/index.html`、`/mobile/index.html`)
- - `width` / `height` — 未來:指定尺寸,做 responsive 檢查
- - `mode` — 未來:`live`(使用者當下看到的)/ `fresh`(以指定尺寸另外重繪一份)
+`fresh` 不動使用者當下的畫面,而且尺寸確定、可重現 —— 前後對照與多尺寸檢查都靠它。
+差異量(`changedSinceLast` / `changedRatio`)**分情境記錄**(live、各尺寸的 fresh 各自一份),
+不同尺寸互相比較沒有意義。
 
 **snapshot 不做成 shell 指令**,理由:fs 描述的是 block 的原始碼,snapshot 的對象是一次 render 的結果,而 render 參數(尺寸、entry、資料)是 host 的 session 狀態,不在 fs 裡。寫成 `snapshot index.html` 會看起來像檔案操作,實際上在操作 shell 看不見的東西。
 
@@ -103,9 +105,27 @@ snapshot 的輸出也不落地到 workspace — 成果目錄只放成果。需�
 
 `@plotdb/block` 已有 host / client 機制(`pkg.host` 宣告、caller 傳 `host: {bid, interface}`、block 以 `client({bid})` 回報能力),`@grantdash/composer` + `@makeform/*` 是既有實作參考。
 
- - **host → client**:host 提供服務給 block(i18n、資源解析等)
- - **client → host**:block 回報選用能力給 host。與 snapshot 相關的是 `capture` / `pause` / `seek` / `state` / `sample`
- - block 端必須有 **host 不存在時的 fallback** — block 會被發佈到別處(makechart、composer、任意網頁)執行,不能假設 host 存在
+目前的 host bid 是 **`@plotdb/wagent`**(sandbox 就是這個 host 的實作)。
+
+ - **host → client**:host 提供服務給 block。目前是 `{loadText, loadJSON, mode}`
+ - **client → host**:block 回報選用能力給 host,全部選用:
+
+       pkg: {host: {name: '@plotdb/wagent'}, ...},
+       client: function() {
+         return {
+           pause: function() {},      // 停掉 rAF 迴圈, 讓畫面可重現
+           seek: function(t) {},      // 跳到指定時間 / 影格
+           state: function() {},      // 結構化狀態, 併入 report 的 blockState
+           capture: function() {}     // 自己截圖, 回 canvas / Blob / dataURL
+         };
+       }
+
+ - `capture` 存在就優先用它 —— WebGL 自己 `readPixels` 遠比外部重繪準確,
+   也繞開 `preserveDrawingBuffer` 的坑
+ - `pause` / `seek` 是動畫與遊戲可被檢查的前提:不凍結時間,前後對照的 diff 全是噪音
+ - `state` 通常比看圖更好用也更便宜(「玩家在哪、幾個敵人、選中什麼」),優先用它
+ - block 端必須有 **host 不存在時的 fallback** — block 會被發佈到別處(makechart、composer、任意網頁)執行,不能假設 host 存在;
+   host 端也一樣,client 沒實作就走泛用路徑
 
 **資料不透過 fs 給 block。** agent 讀寫檔,host 解析後把資料畫進去(對照 makechart 的 binder:chart block 拿到的是資料,不是檔案路徑)。這讓 block 可攜:換個 host、換份資料就能跑。
 

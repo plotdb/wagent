@@ -59,7 +59,6 @@ export const contentTools = [
 ];
 
 // snapshot: 觀察通道, 由 host 實作 (渲染參數是 host 的 session 狀態, 不在 fs 裡)。
-// target / width / height / mode 為預留參數 — 現在忽略, 未來多 sandbox / 多 entry / 指定尺寸時才有值。
 export const snapshotTool = {
   name: 'snapshot',
   description: 'Inspect the rendered block. Without image, returns a cheap structured report: size, whether it looks blank, canvas/svg content signals, visible text, render errors, and how much it changed since the last snapshot — enough to verify a write actually rendered (a block can render without throwing and still be blank). With image:true it also returns a picture of it. You MUST set image:true whenever the question is about how it LOOKS — colors, layout, spacing, overlapping labels, readability, "does this look right". The report cannot answer those, and describing appearance from source code instead of the picture is wrong. Do not claim to have seen the rendering unless you requested the image.',
@@ -67,10 +66,14 @@ export const snapshotTool = {
     type: 'object',
     properties: {
       image: {type: 'boolean', description: 'also return a picture of the rendered block. default false — use only when you need to judge something visual'},
-      target: {type: 'string', description: 'reserved: which sandbox / entry to inspect. omit for now'},
-      width: {type: 'number', description: 'reserved: render width. omit for now'},
-      height: {type: 'number', description: 'reserved: render height. omit for now'},
-      mode: {type: 'string', description: 'reserved: "live" or "fresh". omit for now'}
+      mode: {
+        type: 'string', enum: ['live', 'fresh'],
+        description: '"live" (default) inspects what the user is currently looking at. "fresh" renders another copy off-screen at the given width/height and inspects that — use it to check how the block behaves at a specific size (e.g. mobile) without disturbing the user\'s view.'
+      },
+      width: {type: 'number', description: 'fresh mode only: render width in px (default 375)'},
+      height: {type: 'number', description: 'fresh mode only: render height in px (default 600)'},
+      time: {type: 'number', description: 'for animated blocks that implement seek(): freeze and jump to this time before looking'},
+      target: {type: 'string', description: 'block name to inspect; defaults to the one currently shown'}
     },
     additionalProperties: false
   }

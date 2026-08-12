@@ -12,12 +12,20 @@
    - snapshot 出圖(`image: true`):snapdom 把 DOM 轉圖(canvas / svg / shadow DOM 通吃),
      800px jpeg 控 token;tool 結果可為 `{text, image}`,anthropic 走 tool_result block、
      openai 補一則 user message,兩邊都只保留最新一張圖
+   - snapshot `mode: 'fresh'` + `width` / `height`:畫面外以指定尺寸另掛一份再看,
+     不干擾使用者當下畫面 — responsive 檢查;差異量分情境記錄
+   - block 視覺協定(走 `@plotdb/block` 的 host / client,bid `@plotdb/wagent`):
+     block 可選擇實作 `capture` / `pause` / `seek` / `state`,讓動畫、遊戲、WebGL 也能被檢查;
+     沒實作就 fallback 泛用路徑。prompt 教 agent 寫出可被檢查的 block
  - bugfixes:
    - snapshot 在背景分頁永遠不 resolve(rAF 不觸發),改與 timeout 競賽
    - snapshot 抓到過期畫面(agent 在 tool loop 中途問,但畫面要整輪結束才重繪),改成預設先重繪
    - 失敗的 tool 在對話紀錄顯示成 ✓:tool 事件改分 `phase: 'start' | 'end'` 兩段
    - 新建 block 後的 snapshot 檢查到的是**舊 block**(sandbox 要整輪結束才切換);
      改成 tool 事件的 `end` 就即時切換並重繪,agent 檢查到的才是自己剛寫的東西
+   - 背景分頁的空白畫面被誤診成 block 有 bug(Chrome 凍結 rendering pipeline,rAF 不跑,
+     Chart.js 之類根本沒畫);改成偵測 rAF 是否觸發並據此換掉 hint,明講不是 block 的問題
+   - 剛掛上的 block 還在載資料 / 跑動畫就被取樣;有 canvas 就輪詢到真的畫出東西為止
    - 沒要圖時模型會拿原始碼推測外觀還宣稱「已確認實際呈現」:tool description / prompt /
      報告內容三處收緊,`image: false` 時直接在報告裡寫明沒看到畫面
  - tweaks:
