@@ -2,6 +2,6 @@
 .env
 node_modules
 context/cached
-logs
+/logs
 web/static/assets/lib
 .fedep
