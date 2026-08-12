@@ -105,7 +105,13 @@ esh 的修法:`hardenAsyncMounts()` 把 stack 偵測換成明確的 reentrancy f
 `>` / `>>` 改 async 寫 + 回讀驗證,失敗回 stderr + code 1;`writeFileSync` 寫後驗 size,不符丟 EIO。
 API 無變動,發布後升級即可。
 
-待辦:0.3.2 發布後升級。另外 — **之前被清空但沒被空內容覆寫過的檔案,資料可能還在 OPFS 磁碟上**
+同一輪回報的兩個小問題 esh 也一併修進 0.3.2:`sed` 的 `;` 串接多重運算式現在兩段都套用
+(任一段解析失敗整條 code 1,不再靜默吃掉後半);`grep` 補了 `-c` / `-q`,
+**且無符合時 exit code 改回 POSIX 的 1**(先前一律 0)—— 升級後 agent 用 `$?` 判斷 grep 結果才可靠。
+另確認 `echo x > f && cat f` 這類 read-after-write 有保證(redirect 寫入被 await 到底 + 回讀驗證)。
+
+待辦:0.3.2 發布後升級,順便把 `logs/20260810-browser-runtime.md` 備註裡
+「esh 的 grep 是 JS regex 近似品,flag 未實作時回空字串」那條更新掉。另外 — **之前被清空但沒被空內容覆寫過的檔案,資料可能還在 OPFS 磁碟上**
 (失真只發生在 zenfs 的鏡像層),必要時可用原生 `navigator.storage.getDirectory()` 直讀救回。
 
 
