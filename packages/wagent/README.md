@@ -1,11 +1,11 @@
-# @plotdb/agent
+# @plotdb/wagent
 
 對話驅動的 block 生成/編輯模組:workspace-backed 的 LLM api + chat / sandbox 前端 block。
 
 
 ## 掛載
 
-    const agent = require('@plotdb/agent');
+    const agent = require('@plotdb/wagent');
     app.use('/api/agent', agent({workspace: 'workspace', log: myLogger}));
 
 選項:

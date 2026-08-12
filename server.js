@@ -16,13 +16,13 @@ app.use(express.urlencoded({extended: true}));
 
 require('./api')({app});
 
-// refactor-0809: router 封裝的 api 模組 + 前端 block 檔案 (待 @plotdb/agent 驗證後移除)
+// refactor-0809: router 封裝的 api 模組 + 前端 block 檔案 (待 @plotdb/wagent 驗證後移除)
 app.use('/api/refactor-0809', require('./api/refactor-0809')());
 app.use('/refactor-0809/block', express.static('web/src/pug/refactor-0809/block'));
 
-// @plotdb/agent (packages/agent, npm workspace): 模組化後的正式版
+// @plotdb/wagent (packages/wagent, npm workspace): 模組化後的正式版
 // stream: 後端允許的最高即時等級 ('none' | 'tool' | 'token')
-app.use('/api/agent', require('@plotdb/agent')({workspace: 'workspace', log: require('./lib/log'), stream: 'token'}));
+app.use('/api/agent', require('@plotdb/wagent')({workspace: 'workspace', log: require('./lib/log'), stream: 'token'}));
 
 app.use('/workspace', express.static('workspace'));
 app.use('/', express.static('web/static'));

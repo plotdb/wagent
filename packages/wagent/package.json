@@ -1,5 +1,5 @@
 {
-  "name": "@plotdb/agent",
+  "name": "@plotdb/wagent",
   "version": "0.1.0",
   "description": "conversational block agent: chat + sandbox blocks with a workspace-backed llm api",
   "main": "api/index.js",

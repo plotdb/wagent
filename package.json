@@ -36,7 +36,7 @@
       "@plotdb/semver",
       "proxise",
       {
-        "name": "@plotdb/agent",
+        "name": "@plotdb/wagent",
         "dir": "web"
       },
       "@plotdb/esh"

@@ -2,7 +2,7 @@
 // 並把 chat 協定包成 chat block 用的 transport。
 const DEFAULTS = {
   api: '/api/agent',
-  worker: '/assets/lib/@plotdb/agent/main/runtime/agent-worker.js',
+  worker: '/assets/lib/@plotdb/wagent/main/runtime/agent-worker.js',
   esh: '/assets/lib/@plotdb/esh/main/esh.js',
   eshRemote: '/assets/lib/@plotdb/esh/main/src/remote.js',
   root: '/home/workspace'

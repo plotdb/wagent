@@ -6,12 +6,12 @@ body { margin: 0; font-family: -apple-system, "Helvetica Neue", "PingFang TC", s
 .term-pane { height: 240px; border-top: 1px solid #ddd; background: #1e1e1e; display: flex; flex-direction: column; }
 .term-bar { font: 11px Menlo, monospace; color: #aaa; padding: 4px 10px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; }
 .term-bar b { color: #ddd; font-weight: 600; }
-#term-root { flex: 1; min-height: 0; }</style></head><body><div id="chat-root"></div><div class="main"><div id="sandbox-root"></div><div class="term-pane"><div class="term-bar"><span><b>workspace shell</b> — agent 與你共用同一份 working tree</span><span id="persist-info"></span></div><div id="term-root"></div></div></div><script type="module">import {createRuntime} from '/assets/lib/@plotdb/agent/main/runtime/client.js';
+#term-root { flex: 1; min-height: 0; }</style></head><body><div id="chat-root"></div><div class="main"><div id="sandbox-root"></div><div class="term-pane"><div class="term-bar"><span><b>workspace shell</b> — agent 與你共用同一份 working tree</span><span id="persist-info"></span></div><div id="term-root"></div></div></div><script type="module">import {createRuntime} from '/assets/lib/@plotdb/wagent/main/runtime/client.js';
 
 var params = new URLSearchParams(location.search);
 var blockName = params.get('block');  // null = 新增模式
 var API = '/api/agent';
-var BLOCKS = '/assets/lib/@plotdb/agent/main/block/';
+var BLOCKS = '/assets/lib/@plotdb/wagent/main/block/';
 
 // app block (chat / sandbox 及其 base 層) 的 registry
 var paths = {

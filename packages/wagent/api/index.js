@@ -10,8 +10,8 @@ function levelOf(v, fallback) {
   return LEVELS[v] != null ? v : fallback;
 }
 
-// @plotdb/agent 模組入口: 回傳 express Router, 由 host 決定掛載路徑。
-//   app.use('/api/agent', require('@plotdb/agent')({workspace: 'workspace'}))
+// @plotdb/wagent 模組入口: 回傳 express Router, 由 host 決定掛載路徑。
+//   app.use('/api/agent', require('@plotdb/wagent')({workspace: 'workspace'}))
 // 前端 block (chat / sandbox) 由 router 的 /block/* 提供。
 // opt.workspace: workspace 目錄 (必填); opt.purpose: 領域 prompt (預設 dataviz);
 // opt.log: logger function(tag, msg); opt.providers: 覆寫 llm provider 清單;

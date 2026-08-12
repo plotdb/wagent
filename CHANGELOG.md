@@ -1,5 +1,13 @@
 # Change Logs
 
+## master
+
+ - tweaks:
+   - `@plotdb/agent` 更名 `@plotdb/wagent`(`packages/agent` -> `packages/wagent`);
+     專案定位由「對話生成圖表」升級為編輯宿主 (host),名稱與 repo 一致
+   - `context/project/host.md`: Host 定義 — mounts / shell / content ops / snapshot / tools(選用)
+
+
 ## v0.2.0
 
  - features:

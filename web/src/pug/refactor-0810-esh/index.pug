@@ -36,12 +36,12 @@ html
         #term-root
 
     script(type="module").
-      import {createRuntime} from '/assets/lib/@plotdb/agent/main/runtime/client.js';
+      import {createRuntime} from '/assets/lib/@plotdb/wagent/main/runtime/client.js';
 
       var params = new URLSearchParams(location.search);
       var blockName = params.get('block');  // null = 新增模式
       var API = '/api/agent';
-      var BLOCKS = '/assets/lib/@plotdb/agent/main/block/';
+      var BLOCKS = '/assets/lib/@plotdb/wagent/main/block/';
 
       // app block (chat / sandbox 及其 base 層) 的 registry
       var paths = {
