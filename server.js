@@ -22,7 +22,13 @@ app.use('/refactor-0809/block', express.static('web/src/pug/refactor-0809/block'
 
 // @plotdb/wagent (packages/wagent, npm workspace): 模組化後的正式版
 // stream: 後端允許的最高即時等級 ('none' | 'tool' | 'token')
-app.use('/api/agent', require('@plotdb/wagent')({workspace: 'workspace', log: require('./lib/log'), stream: 'token'}));
+// purpose: 領域知識由應用層 (packages/dataviz) 提供 — wagent 本身不認得任何領域
+app.use('/api/agent', require('@plotdb/wagent')({
+  workspace: 'workspace',
+  purpose: require('./packages/dataviz').purpose,
+  log: require('./lib/log'),
+  stream: 'token'
+}));
 
 app.use('/workspace', express.static('workspace'));
 app.use('/', express.static('web/static'));

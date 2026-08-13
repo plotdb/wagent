@@ -9,7 +9,8 @@
 
  - 啟動：`PORT=3457 npm start`（`.env` 需設 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`）；`npm run log` 看後端 log
  - 主要頁面 `/refactor-0809-module/index.html`（chat + sandbox，經 `@plotdb/agent` 模組）；`?block=<name>` 進入編輯模式
- - 核心模組在 `packages/wagent/`（`@plotdb/wagent`，npm workspace）：api router、wsenv、llm adapter、chat / sandbox block
+ - 核心模組在 `packages/wagent/`（`@plotdb/wagent`，npm workspace）：api router、wsenv、llm adapter、chat / sandbox block。**不認得任何領域**
+ - 領域(應用層)在 `packages/dataviz/`：以 `purpose` 代入 wagent。分層是 application > wagent/host > agent loop, shell, sandbox
  - 前端源碼在 `web/src/pug/`，由 `@plotdb/srcbuild` 自動編譯至 `web/static/`；前端 lib 由 fedep 複製到 `web/static/assets/lib/`
  - 圖表與資料存於 `workspace/`（`blocks/<name>/index.html`、`data/`），為唯一 source of truth
  - 舊版：首頁 `/` 與 `/edit.html`（自製 js block 格式）、`/refactor-0809/`（模組化前），確認新版 ok 後移除
@@ -18,6 +19,9 @@
 ## 文件結構
 
  - `host.md` — **Host 定義**(mounts / shell / content ops / snapshot / tools)。目前的上位設計
+ - `spec/` — 單次設計決策的記錄(日期命名)。
+   `20260813-decoupling-and-architexture-refactor.md` — 分層(application / wagent / agent)、
+   資料的三個層級、契約 vs 綁定,以及待做的「application 如何把自己講給 agent 聽」
  - `spec.md` — 舊的系統設計(尚未隨 browser runtime 與 host 化更新,以 `host.md` 為準)
  - `features.md` — 目前已實作的功能
  - `logs/` — 工作記錄

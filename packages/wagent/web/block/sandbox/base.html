@@ -34,8 +34,10 @@
         // snapdom: 出圖的泛用路徑 (DOM -> 圖)。canvas / svg / shadow DOM 它自己會處理,
         // 所以 Chart.js 與 d3 都不必特別對待。只在需要出圖時才動態載入。
         this.snapdomUrl = d.snapdom || '/assets/lib/@zumer/snapdom/main/dist/snapdom.mjs';
-        this.blockdataUrl = d.blockdata || '/assets/lib/@plotdb/wagent/main/runtime/blockdata.js';
-        this.blockdata = null;
+        // d.data: function(blockName) -> (Promise of) 要交給 block 的 opt.data。
+        // 這是應用層的窗口 — 資料的語意屬於應用, wagent 對它的內容一無所知。
+        // 不給就是空的; block 拿不到任何東西也應該能跑。
+        this.data = typeof d.data === 'function' ? d.data : null;
         this.imageWidth = d.imageWidth || 800;   // 送進 LLM 的圖寬, 直接對應 token 成本
         this.captureTimeout = d.captureTimeout || 6000;
         this.snapdom = null;
@@ -345,29 +347,14 @@
           });
         }
 
-        // block.json 的 data 宣告 -> 已解析好的資料。沒有 block.json 就是空的。
-        // 讀不到 / 不是合法 json 都不算錯 (block.json 本來就是選用的), 但 data 解析失敗要往上拋 —
-        // 少一份資料通常就是空白畫面, 靜靜吞掉只會讓 agent 去猜。
+        // block 要拿到什麼資料, 由應用層決定 — sandbox 不看也不碰內容。
+        // 沒給 provider 就是空的: block 拿不到任何東西也應該能跑。
+        // (composer 換成 nodemgr、makechart 換成 sharehub, 換的都是這個位置)
         function blockData(name) {
-          return self.io.loadText('blocks/' + name + '/block.json')
-            .then(function(t) {
-              try { return JSON.parse(t); }
-              catch(e) { throw new Error('blocks/' + name + '/block.json is not valid JSON: ' + e.message); }
-            }, function() { return null; })
-            .then(function(meta) {
-              if(!meta || !meta.data) { return {}; }
-              return loadBlockData().then(function(bd) {
-                return bd.resolveData(meta.data, function(p) { return self.io.loadText(p); });
-              });
-            });
-        }
-
-        function loadBlockData() {
-          if(self.blockdata) { return Promise.resolve(self.blockdata); }
-          return import(self.blockdataUrl).then(function(m) {
-            self.blockdata = m;
-            return m;
-          });
+          if(typeof self.data !== 'function') { return Promise.resolve({}); }
+          return Promise.resolve()
+            .then(function() { return self.data(name); })
+            .then(function(d) { return (d && typeof d === 'object') ? d : {}; });
         }
 
         // 載入並執行 workspace 的 block。每次建新 manager 避免 cache 到舊版原始碼。
@@ -384,11 +371,8 @@
             var cls = new window.block['class']({
               name: name, version: 'main', code: r[0], manager: mgr
             });
-            // opt.data = block.json 解析後的資料。loadText / loadJSON 是舊路徑,
-            // 保留給還沒轉過來的 block, 新的 block 應該用 block.json 宣告。
-            var data = {loadText: self.io.loadText, loadJSON: self.io.loadJSON};
-            Object.keys(r[1]).forEach(function(k) { data[k] = r[1][k]; });
-            return cls.create({root: el, data: data, host: hostObject()});
+            // opt.data 原封不動來自應用層。sandbox 對它的內容沒有任何假設。
+            return cls.create({root: el, data: r[1], host: hostObject()});
           });
         }
 

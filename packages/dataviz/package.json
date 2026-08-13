@@ -1,0 +1,8 @@
+{
+  "name": "dataviz",
+  "version": "0.1.0",
+  "private": true,
+  "description": "資料視覺化應用層 — 疊在 @plotdb/wagent 上的領域知識 (wagent 本身不認得任何領域)",
+  "main": "index.js",
+  "license": "ISC"
+}

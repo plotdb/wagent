@@ -19,10 +19,12 @@
      沒實作就 fallback 泛用路徑。prompt 教 agent 寫出可被檢查的 block
    - snapshot 報告加 `client.implements` / `client.seek`:講明 block 實作了哪些能力、
      要求的 `time` 有沒有真的生效
-   - block 資料綁定:`blocks/<name>/block.json` 宣告要哪些資料,host 讀檔解析後注入
-     `opt.data.<key>` — block 不再自己讀檔,換個環境、換份資料就能跑。
-     `runtime/blockdata.js` 零依賴自帶 csv/tsv 解析(引號跳脫、整欄才轉數字,
-     郵遞區號這種前導零代碼不會被吃掉);解析失敗一次列齊所有壞掉的路徑
+   - **分層解耦**:`opt.data` 的內容改由應用層決定 —
+     `create('sandbox', el, {data: function(blockName) {...}})`,不給就是空的。
+     wagent 對「資料」的知識歸零,只把應用層給的物件原封不動交給 block
+     (之後 composer 換 nodemgr、makechart 換 sharehub,換的是同一個位置)
+   - `packages/dataviz`:領域知識(d3 / Chart.js 慣例)搬出 wagent 成為獨立應用層,
+     以 `purpose` 代入;wagent 不給 purpose 就是一個純粹的 block 編輯環境
  - bugfixes:
    - 要求 `time` 但 block 沒實作 `seek` 時默默回一張隨機影格,agent 會當成 t=N 的畫面;
      改成報告寫明 seek 未生效

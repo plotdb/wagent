@@ -47,7 +47,16 @@ createRuntime({api: API})
     return mgr.get([{name: 'chat-base'}, {name: 'sandbox-base'}]).then(function() { return rt; });
   })
   .then(function(rt) {
-    return create('sandbox', document.getElementById('sandbox-root'), {api: API, io: rt.io})
+    // ── 應用層決定 block 拿到什麼資料 ──────────────────────────────
+    // wagent 對資料的語意一無所知, 它只負責把這個物件交給 block。
+    // 這個測試框架目前給的是 loader (block 自己按路徑讀), 那是過渡做法 —
+    // 正解是文件狀態(對照 makechart 的 sharehub / composer 的 nodemgr):
+    // 由應用層持有資料本身, 直接餵值進去, block 不必知道任何路徑。
+    var dataFor = function(name) {
+      return {loadText: rt.io.loadText, loadJSON: rt.io.loadJSON};
+    };
+    return create('sandbox', document.getElementById('sandbox-root'),
+                  {api: API, io: rt.io, data: dataFor})
       .then(function(sb) {
         window.sb = sb;  // 方便在 console 觀察 (sb.snapshot)
         // sandbox 即 host 的觀察通道: 把 snapshot 交給 agent

@@ -131,18 +131,23 @@ snapshot 的輸出也不落地到 workspace — 成果目錄只放成果。需�
  - block 端必須有 **host 不存在時的 fallback** — block 會被發佈到別處(makechart、composer、任意網頁)執行,不能假設 host 存在;
    host 端也一樣,client 沒實作就走泛用路徑
 
-**資料不透過 fs 給 block。** agent 讀寫檔,host 解析後把資料畫進去(對照 makechart 的 binder:chart block 拿到的是資料,不是檔案路徑)。這讓 block 可攜:換個 host、換份資料就能跑。
+### 資料:wagent 不碰
 
-實作:`blocks/<name>/block.json` 宣告需求,host 讀檔、依副檔名(或 `type`)解析後注入 `opt.data.<key>`。
+`opt.data` 的**內容由應用層決定,wagent 對它一無所知**。sandbox 只是把應用層給的物件原封不動交給 block。
 
-    {"data": {"orders": "data/orders.csv", "cfg": {"src": "data/c.json", "type": "json"}}}
+    create('sandbox', el, {api, io, data: function(blockName) { ... }})
 
- - csv / tsv → 物件陣列;**整欄**都是數字才轉 number。逐格轉會讓同一欄混出 number 與 string,
-   下游的排序與比較會安靜地出錯,而且郵遞區號、產品編號這種前導零代碼會被吃掉
- - 解析器自己寫(`runtime/blockdata.js`,零依賴)。host 不該因為「有人要畫圖」而拖進 d3
- - 讀不到 / 解析失敗要**一次列出全部**再拋,而不是修一個發現下一個;
-   而且必須讓 render 失敗,別讓 block 拿著 undefined 畫出一片空白 — 空白會被歸因到別的地方
- - `loadText` / `loadJSON` 仍在,給還沒轉過來的 block
+ - 不給 `data` 就是空的 — block 拿不到任何東西也應該能跑
+ - 資料的語意(csv 怎麼解、哪一欄對哪個維度)屬於應用層。判準:**一個拿 wagent 做遊戲、
+   做 web component 的人用不到的東西,就不屬於 wagent**
+ - 之後 composer 換成 `nodemgr`、makechart 換成 `sharehub`,換的都是這個位置
+
+正確的模型是**文件狀態,不是檔案路徑**:makechart 的 `host.local.raw` 存的是資料本身(在 sharedb 裡),
+composer 的 `hostitf.get/set` 依 node id 從 `nodemgr` 取。兩邊的 block 都不讀檔、也不持有路徑。
+在 wagent 裡把檔案變成文件資料的是 **agent** —— 它本來就握有 fs 與 shell。
+
+目前測試框架注入的是 `{loadText, loadJSON}`(block 自己按路徑讀),**那是過渡做法**,
+記在 `spec/20260813-decoupling-and-architexture-refactor.md`。
 
 edge case:檔案多 / 大 / 動態的 block(遊戲素材、地圖圖磚)可能真的需要 fs 存取。這是 host 的選用能力,尚未實作;方向是 host 為每個 block instance 組一張掛載表(而非路徑白名單),並優先考慮用 Service Worker 把 fs 映成 URL 前綴,讓 block 維持標準 web 寫法(`fetch` / `<img src>` / CSS `url()`)。
 

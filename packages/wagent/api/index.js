@@ -13,7 +13,8 @@ function levelOf(v, fallback) {
 // @plotdb/wagent 模組入口: 回傳 express Router, 由 host 決定掛載路徑。
 //   app.use('/api/agent', require('@plotdb/wagent')({workspace: 'workspace'}))
 // 前端 block (chat / sandbox) 由 router 的 /block/* 提供。
-// opt.workspace: workspace 目錄 (必填); opt.purpose: 領域 prompt (預設 dataviz);
+// opt.workspace: workspace 目錄 (必填); opt.purpose: 領域 prompt, 由應用層提供
+//   (wagent 不內建領域; 不給就是一個純粹的 block 編輯環境);
 // opt.log: logger function(tag, msg); opt.providers: 覆寫 llm provider 清單;
 // opt.stream: 後端允許的最高 stream 等級 'none' | 'tool' | 'token' (預設 'token')
 module.exports = function(opt) {
@@ -21,7 +22,7 @@ module.exports = function(opt) {
   const log = opt.log || function() {};
   const env = wsenv({root: opt.workspace, log: log});
   const llm = makeLLM({providers: opt.providers});
-  const purpose = opt.purpose || prompt.DATAVIZ;
+  const purpose = opt.purpose || '';
   const allowed = levelOf(opt.stream, 'token');
   const router = express.Router();
 
