@@ -44,7 +44,7 @@ createRuntime({api: API})
     eshTerm.createTerminal(document.getElementById('term-root'), {
       worker: rt.worker, home: rt.root
     });
-    return mgr.get([{name: 'chat-base'}, {name: 'sandbox-base'}]).then(function() { return rt; });
+    return rt;   // base 層不必預載: block 的 pkg.extend 會自己經 manager 解析
   })
   .then(function(rt) {
     // ── 應用層決定 block 拿到什麼資料 ──────────────────────────────
