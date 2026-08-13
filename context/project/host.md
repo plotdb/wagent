@@ -139,6 +139,7 @@ makechart 的 `raw` / `bind` —— 對它是全盲的,而**它會用猜的**。
        pkg: {host: {name: '@plotdb/wagent'}, ...},
        client: function() {
          return {
+           data: function(v) {},      // 資料更新 (見下), 沒實作就整個重掛
            pause: function() {},      // 停掉 rAF 迴圈, 讓畫面可重現
            seek: function(t) {},      // 跳到指定時間 / 影格
            state: function() {},      // 結構化狀態, 併入 report 的 blockState
@@ -149,6 +150,14 @@ makechart 的 `raw` / `bind` —— 對它是全盲的,而**它會用猜的**。
  - `capture` 存在就優先用它 —— WebGL 自己 `readPixels` 遠比外部重繪準確,
    也繞開 `preserveDrawingBuffer` 的坑
  - `pause` / `seek` 是動畫與遊戲可被檢查的前提:不凍結時間,前後對照的 diff 全是噪音
+ - `data` 是**過渡措施**。資料變動時 host 呼叫它做增量更新,沒實作就重新 mount
+   (重掛會丟掉 block 的內部狀態:動畫重來、選取消失)。
+   語意上它有點偏 —— `client()` 原本是「我對這個 host 回報的能力」,而餵資料
+   比較像 block 的公開行為 —— 但這是目前唯一合法的擴充點。
+   `@plotdb/block` 的 instance 已經留了 `update` 的位子(原始碼標著 TBD),
+   那個做好之後 `data` 就退位。**host 不該直接改 `inst.data`** — 那是伸手動別人的內部狀態;
+   代價是 `inst.data` 兩種做法都會過期(只有 instance 自己能改),
+   目前無害,因為 `run()` 只在 init / destroy 讀它
  - `state` 通常比看圖更好用也更便宜(「玩家在哪、幾個敵人、選中什麼」),優先用它。
    但它的大小完全由 block 決定 — host 會在 2000 字元處截斷並要求 block 改回摘要,
    否則「便宜的報告」這個前提會被一個粒子模擬直接打破

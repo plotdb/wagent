@@ -17,7 +17,21 @@ const PURPOSE = `目前的任務領域是資料視覺化 — block 的目的是�
 畫圖時直接用 opt.data.rows,不要 fetch、不要 loadText、不要假設任何檔案路徑 —
 這樣的 block 換個環境、換份資料就能跑。
 
-使用者改試算表時,執行環境會用新資料重新渲染你的 block,你不必做任何事。
+使用者改試算表時,執行環境會把新資料送過來。預設是整個 block 重新建立 —
+簡單但會丟掉內部狀態 (動畫重來、選取狀態消失), 資料大也慢。
+
+想要增量更新就實作 client 的 data:
+
+    client: function() {
+      return {
+        data: function(v) {
+          // v 與 opt.data 同格式 {columns, rows}; 更新既有的圖表即可
+          // 回 Promise 的話執行環境會等它完成
+        }
+      };
+    }
+
+有實作就只呼叫它、不重建;沒實作就 fallback 重建, 兩種都能運作。
 
 要看目前的資料:用 read_sheet。要放範例資料進去:用 write_sheet (csv,第一列是表頭)。
 使用者可能已經有自己的資料了,動手覆蓋前先 read_sheet 看一眼。

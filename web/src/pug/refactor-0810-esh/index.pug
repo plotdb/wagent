@@ -138,7 +138,8 @@ html
               store.on(function() {
                 showInfo();
                 if(!fromSheet) { sh.data(store.raw()); }
-                if(sb.current()) { sb.refresh(); }
+                // 資料變了 -> 有實作 client.data 的 block 增量更新, 其餘重掛
+                if(sb.current()) { sb.updateData(); }
               });
               showInfo();
               // sandbox 即 host 的觀察通道: 把 snapshot 交給 agent

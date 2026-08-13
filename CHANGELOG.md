@@ -37,6 +37,10 @@
      agent 以 `read_sheet` / `write_sheet` 存取(esh 的 device backend 到位後會變成 `/dev/sheet`)。
      csv parser 回到應用層 `packages/dataviz/web/csv.js` — 欄位型別由 dimensions 宣告,
      不再需要「整欄都是數字才轉」那套推測
+   - **資料增量更新**:client 協定加 `data(v)` — 資料變動時 host 先呼叫它,
+     沒實作(或它拋錯)才整個重掛。重掛會丟掉 block 的內部狀態,動畫類特別明顯。
+     走 client 而非直接改 `inst.data`(host 不該動別人的內部狀態);
+     `@plotdb/block` 的 `instance.update` 做好之後這層退位
    - **應用層把自己講給 agent 聽**:`registerHost({tools, run, brief, context})` —
      `brief`(靜態,這是什麼應用)併進 system prompt;`context`(動態,現在什麼狀況)
      每輪取一次附在對話尾端。少了它,應用自己的文件狀態(composer 的 tree、

@@ -527,6 +527,35 @@
                   });
               });
           },
+          // 資料變了。有實作 client 的 data 就增量更新, 否則整個重掛。
+          //
+          // 為什麼走 client 而不是直接改 inst.data: host 不該伸手動別人的內部狀態。
+          // 語意上這確實有點偏 —— client 原本是「我對這個 host 回報的能力」,
+          // 而餵資料比較像 block 的公開行為。但這是目前唯一合法的擴充點:
+          // @plotdb/block 的 instance 已經留了 `update` 的位子 (原始碼裡標著 TBD),
+          // 那個做好之後這裡就退位。
+          //
+          // 注意 inst.data 兩種做法都不會更新 (只有 instance 自己能改)。
+          // 目前無害 —— run() 只在 init / destroy 讀它 —— 但這是上限, 不是設計。
+          updateData: function() {
+            if(!self.current) { return Promise.resolve({applied: 'none'}); }
+            var c = clientOf(self.inst);
+            var remount = function(why) {
+              self.itf.refresh();
+              return (self.rendering || Promise.resolve()).catch(function() {})
+                .then(function() { return {applied: 'remount', reason: why}; });
+            };
+            if(!c || typeof c.data !== 'function') { return remount('block has no client.data'); }
+            return Promise.resolve()
+              .then(function() { return self.data ? self.data(self.current) : {}; })
+              .then(function(v) { return callClient(c, 'data', v); })
+              .then(function(r) {
+                // 更新失敗就退回重掛 —— 不能留著舊畫面假裝更新過了,
+                // 「更新了但畫面沒動」是這個專案最會說謊的那種狀況
+                if(r && r.error) { return remount('client.data threw: ' + r.error); }
+                return {applied: 'client'};
+              });
+          },
           // show / refresh 廣播 'show' 事件, 由 derived 視覺層決定渲染位置
           show: function(name) {
             self.current = name;
