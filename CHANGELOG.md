@@ -41,6 +41,10 @@
      沒實作(或它拋錯)才整個重掛。重掛會丟掉 block 的內部狀態,動畫類特別明顯。
      走 client 而非直接改 `inst.data`(host 不該動別人的內部狀態);
      `@plotdb/block` 的 `instance.update` 做好之後這層退位
+   - snapshot 改成**只觀察不驅動渲染**:等進行中的渲染,但不再自己 refresh。
+     那是重繪決定移交應用層之前的遺留 —— 留著會讓 `client.data` 的增量更新作廢
+     (每次檢查畫面都重建)。實測:agent 改原始碼一輪 1 次重掛(原本 2 次)、
+     改資料 0 次;`snapshot({refresh: true})` 仍可強制
    - **agent 的 fs 範圍(chroot)**:agent 與終端機改用不同 shell、同一份 fs —
      agent 關在 `root` 內(`pwd` 是 `/`、`cd ..` 出不去、`/etc/passwd` 不存在),
      終端機不受限。預設 root 是 workspace,`rt.setAgentRoot()` 可再縮。
@@ -66,6 +70,7 @@
      有 error 就只講 error
    - 使用者在終端機改檔(或任何非 write_file 的變更)不會觸發重繪 — 先前只認
      `write_file` / `edit_file` 的路徑;改由 fs 變更事件驅動後,`sed -i` 也會重畫
+   - `client.implements` 漏報 `data`(`CLIENT_CAPS` 沒收錄),block 明明實作了卻不出現在報告裡
    - `sheet-store` 把內部陣列的參考交給 sheet widget,widget 就地補空白列 —
      `setRaw(4 列)` 同一次呼叫內變成 29 列,文件狀態被畫面狀態污染
      (agent 對 `dev/sheet` 下 `wc -l` 會拿到 29 而實際只有 4 筆)。

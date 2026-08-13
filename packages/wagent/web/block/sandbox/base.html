@@ -92,7 +92,7 @@
             .catch(function(e) { return {error: String((e && e.message) || e)}; });
         }
 
-        var CLIENT_CAPS = ['pause', 'seek', 'state', 'capture'];
+        var CLIENT_CAPS = ['data', 'pause', 'seek', 'state', 'capture'];
         function capsOf(c) {
           if(!c) { return []; }
           return CLIENT_CAPS.filter(function(k) { return typeof c[k] === 'function'; });
@@ -494,13 +494,18 @@
             o = o || {};
             if(o.mode === 'fresh') { return snapshotFresh(o); }
 
-            // live: 先重繪再看。agent 是在 tool loop 中途問畫面的, 這時畫面上可能還是
-            // 改動前的那一版, 不重繪就會回報過期的結果。
+            // live: 只**等**進行中的渲染, 不自己發動重繪。
+            //
+            // 先前這裡預設會 refresh 一次, 因為那時「什麼時候重畫」還沒有別人負責,
+            // agent 在 tool loop 中途問畫面就會看到改動前的版本。現在重繪的決定
+            // 已經在應用層 (fs 變更 / 資料變更都由它判斷), 而 fs-change 是在
+            // tool 回覆之前就送出的, 所以輪到 snapshot 時應用層早已發動重繪 —
+            // 這裡再 refresh 一次只是重掛第二遍, 還會把 client.data 的增量更新
+            // 全部作廢 (每次檢查畫面都重建, 動畫與內部狀態照樣丟失)。
+            // 要強制重繪仍可傳 refresh: true。
             var ready = Promise.resolve();
-            if(o.refresh !== false && self.current) {
-              self.itf.refresh();                                  // 視覺層會同步呼叫 render
-              ready = (self.rendering || Promise.resolve()).catch(function() {});
-            }
+            if(o.refresh === true && self.current) { self.itf.refresh(); }
+            if(self.rendering) { ready = self.rendering.catch(function() {}); }
             return ready
               .then(function() {
                 var c = clientOf(self.inst);

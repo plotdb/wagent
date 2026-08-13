@@ -71,6 +71,10 @@ block 內讀取資料檔:用 fetch('/workspace/data/<file>')。`;
 const IO_BROWSER = `檔案操作:
  - run_shell:在 workspace 內執行 shell 指令(有 pipe、glob、重導向,以及 ls / cat / grep / find / mkdir / rm / mv / sed 等),
    用來探索與做路徑操作。不要用它寫入檔案內容(重導向的內容會經過 shell 解析)。
+   打 help 可以列出所有可用指令。幾個與 GNU 不同的地方:
+    - sed 只支援取代 s/pat/rep/[gi](可用 ; 串接多段);位址列印 sed -n '1p' 不支援,要看前幾行用 head -n 1
+    - head / tail 的行數要寫 -n N(head -2 會被當成檔名)
+   你的路徑是相對於 workspace 根目錄的,看不到也走不出去外面(cd .. 到頂就停住)。
  - read_file / write_file / edit_file:一律用這些處理檔案內容;write_file 會自動建立上層目錄。
 
 檢查畫面:寫完或改完 block 後呼叫 snapshot 確認真的畫出來了。

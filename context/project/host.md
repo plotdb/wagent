@@ -86,6 +86,10 @@ esh 實例,負責路徑操作與探索(`ls` / `cat` / `grep` / `find` / `mkdir` 
     snapshot({image, mode, width, height, time, target}) -> {report, image?}
 
  - `report`(必回):空白偵測、渲染錯誤、與上一張的差異量。便宜,不花 vision token。
+ - **snapshot 只觀察,不驅動渲染。** 它等進行中的渲染,但不自己發動重繪 ——
+   「什麼時候重畫」是應用層的事(fs 變更 / 資料變更都由它判斷)。
+   先前這裡預設會 refresh,那是重繪決定移交應用層之前的遺留;留著會讓
+   `client.data` 的增量更新完全作廢(每次檢查畫面都重建一次)。要強制重繪傳 `refresh: true`
  - `image`(預設 false):要圖才給圖。來源優先序 = block 自報的 `capture` > 泛用的 DOM→圖(snapdom)。
  - `mode`:`live`(預設,使用者當下看到的)/ `fresh`(畫面外以指定尺寸另外掛一份,截完就丟)
  - `width` / `height`:fresh 模式的尺寸,用來做 responsive 檢查
