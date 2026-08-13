@@ -25,6 +25,11 @@
      (之後 composer 換 nodemgr、makechart 換 sharehub,換的是同一個位置)
    - `packages/dataviz`:領域知識(d3 / Chart.js 慣例)搬出 wagent 成為獨立應用層,
      以 `purpose` 代入;wagent 不給 purpose 就是一個純粹的 block 編輯環境
+   - **重繪的決定移到 application**:worker 發 `fs-change`(包在 shell 物件上,
+     agent 的 tool 與使用者的終端機共用同一個 `sh`,一個發射點蓋住兩邊),
+     `rt.onFsChange` 讓應用層自己決定要不要重畫。
+     另外把「換一個東西給我看」拆成應用層註冊的 `open_block` tool —
+     先前是用 `write_file` 的路徑去猜,兩件事混在一起,而且只猜得到 agent
    - **應用層把自己講給 agent 聽**:`registerHost({tools, run, brief, context})` —
      `brief`(靜態,這是什麼應用)併進 system prompt;`context`(動態,現在什麼狀況)
      每輪取一次附在對話尾端。少了它,應用自己的文件狀態(composer 的 tree、
@@ -39,6 +44,8 @@
      純色另報 `uniform` — 「畫了東西但沒有細節」與「什麼都沒畫」是兩回事
    - block 根本沒跑起來時仍給「容器沒高度」「資料沒進到繪圖」的提示,把 agent 帶去修不存在的問題;
      有 error 就只講 error
+   - 使用者在終端機改檔(或任何非 write_file 的變更)不會觸發重繪 — 先前只認
+     `write_file` / `edit_file` 的路徑;改由 fs 變更事件驅動後,`sed -i` 也會重畫
    - 每輪的應用狀況若把歷史裡舊的整個刪掉,使用者自己切換畫面後 agent 會判定成
      「我上次答錯了」並道歉一個不存在的錯誤(它上次是對的);改成留佔位,
      讓模型分得出「狀況變了」與「我搞錯了」

@@ -44,9 +44,29 @@ export function createRuntime(opt) {
       });
   }
 
+  // fs 變更通知。worker 只說「動過什麼」, 由應用層決定要不要重畫 —
+  // 它才知道現在畫的是哪個東西。paths 為 null 表示「可能變了但不知道哪些」
+  // (shell 執行後, esh 無 watch)。
+  const fsListeners = [];
+  function onFsChange(fn) {
+    if(typeof fn !== 'function') { return function() {}; }
+    fsListeners.push(fn);
+    return function() {
+      const i = fsListeners.indexOf(fn);
+      if(i >= 0) { fsListeners.splice(i, 1); }
+    };
+  }
+
   // worker 的 postMessage 是廣播: 一律以 id 過濾出自己的訊息
   worker.addEventListener('message', function(ev) {
     const msg = ev.data || {};
+    if(msg.type === 'fs-change') {
+      const info = {paths: msg.paths || null};
+      fsListeners.forEach(function(fn) {
+        try { fn(info); } catch(e) { console.error('fs-change listener failed', e); }
+      });
+      return;
+    }
     if(msg.type === 'host-call') {
       // 一律回覆 (含失敗), 否則 worker 端的 agent loop 會空等到 timeout
       const done = function(ok, payload) {
@@ -125,7 +145,8 @@ export function createRuntime(opt) {
       };
       return {
         worker: worker, sh: sh, io: io, transport: transport,
-        registerHost: registerHost, root: o.root, workerUrl: url
+        registerHost: registerHost, onFsChange: onFsChange,
+        root: o.root, workerUrl: url
       };
     });
 }

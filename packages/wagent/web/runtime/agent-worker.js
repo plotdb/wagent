@@ -84,6 +84,40 @@ for(const [p, content] of Object.entries(SEED)) {
 }
 await sh.run(`cd ${ROOT}`);
 
+// ── fs 變更事件 ───────────────────────────────────────────────────────
+// 包在 shell 物件上, 而不是包在 tool 層 — 因為 agent 的 tool 與使用者的終端機
+// 用的是同一個 sh (serveShell 內部也是呼叫 sh.run / sh.io.writeFile),
+// 一個發射點就同時蓋住兩邊。
+//
+// 這裡只回報「動過什麼」, 不決定誰該重畫 — 那是 application 的事:
+// 只有它知道現在畫的是哪個東西、編輯範圍到哪。
+const READONLY = /^(ls|cat|grep|find|pwd|echo|wc|head|tail|test|help|which|env|date|sort|uniq|cut|tr|diff|stat)$/;
+function mutates(cmdline) {
+  if(/>/.test(cmdline)) { return true; }
+  return String(cmdline).split(/\||;|&&/).some(function(seg) {
+    const t = seg.trim().split(/\s+/)[0] || '';
+    return t && !READONLY.test(t);
+  });
+}
+(function watchFs() {
+  const run = sh.run.bind(sh);
+  const write = sh.io.writeFile.bind(sh.io);
+  sh.run = function(cmdline) {
+    return run(cmdline).then(function(r) {
+      // esh 沒有 watch, shell 執行完並不知道自己動了什麼 — 只能說「可能變了」。
+      // 寧可多報: 漏報是畫面停在舊的 (現在的行為), 多報只是多畫一次。
+      if(mutates(cmdline)) { post({type: 'fs-change', paths: null}); }
+      return r;
+    });
+  };
+  sh.io.writeFile = function(p, c) {
+    return write(p, c).then(function(r) {
+      post({type: 'fs-change', paths: [p]});
+      return r;
+    });
+  };
+})();
+
 esh.serveShell(sh, self, {persist: persist, root: ROOT});
 
 // ── chat 層 ───────────────────────────────────────────────────────────

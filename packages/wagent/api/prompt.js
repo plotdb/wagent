@@ -59,7 +59,7 @@ WebGL 一定要用 getContext('webgl2', {preserveDrawingBuffer: true}),否則畫
    old_string 需與檔案完全一致並唯一(不確定時多帶前後幾行);結構性重寫或建新檔才用 write_file。
    edit_file 前必須先 read_file;若回報檔案已被改動,重讀後再試。
  - 用戶沒提供資料時,可自行生成合理的範例資料檔到 data/。
- - 完成後簡短告訴用戶你建立/修改了哪些檔案;頁面會自動重新渲染。
+ - 完成後簡短告訴用戶你建立/修改了哪些檔案。
  - 回覆使用與用戶相同的語言。`;
 
 // 執行環境差異: server 模式 workspace 在後端 (檔案以 URL 提供給瀏覽器);

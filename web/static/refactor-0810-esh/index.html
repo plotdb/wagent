@@ -10,6 +10,7 @@ body { margin: 0; font-family: -apple-system, "Helvetica Neue", "PingFang TC", s
 
 var params = new URLSearchParams(location.search);
 var blockName = params.get('block');  // null = 新增模式
+var chat = null;                      // open_block tool 要用, 稍後才建立
 var API = '/api/agent';
 var BLOCKS = '/assets/lib/@plotdb/wagent/main/block/';
 
@@ -60,8 +61,51 @@ createRuntime({api: API})
       .then(function(sb) {
         window.sb = sb;  // 方便在 console 觀察 (sb.snapshot)
         // sandbox 即 host 的觀察通道: 把 snapshot 交給 agent
+        // ── 誰決定重畫: application ────────────────────────────────
+        // 兩件不同的事:
+        //  1. 「我正在看的東西變了」-> fs 變更事件 (來源不只 agent:
+        //     使用者的終端機、之後頁面上的 codemirror 都算)
+        //  2. 「換一個東西給我看」  -> agent 明講的 open_block tool
+        // 先前是用 write_file 的路徑去猜, 兩件事混在一起, 而且只猜得到 agent。
+        function currentDir() {
+          return sb.current() ? 'blocks/' + sb.current() + '/' : null;
+        }
+        rt.onFsChange(function(o) {
+          if(!sb.current()) { return; }
+          // paths 為 null = shell 動過但不知動了什麼 -> 保守重畫
+          if(!o.paths) { return sb.refresh(); }
+          var dir = currentDir();
+          var hit = o.paths.some(function(p) {
+            var rel = p.indexOf(rt.root + '/') === 0 ? p.slice(rt.root.length + 1) : p;
+            return rel.indexOf(dir) === 0 || rel.indexOf('data/') === 0;
+          });
+          if(hit) { sb.refresh(); }
+        });
+
         rt.registerHost({
+          // 應用層自己的 tool。wagent 不需要知道「block」是什麼 —
+          // composer 在這裡註冊的會是「開啟某個 node」之類的東西。
+          tools: [{
+            name: 'open_block',
+            description: 'Show a block in the preview pane, making it the current editing target. ' +
+              'Call this after creating a NEW block — otherwise the user keeps looking at the previous one. ' +
+              'Not needed after editing the block that is already open (the preview refreshes by itself).',
+            parameters: {
+              type: 'object',
+              properties: {name: {type: 'string', description: 'block directory name under blocks/'}},
+              required: ['name'],
+              additionalProperties: false
+            }
+          }],
           run: function(name, args) {
+            if(name === 'open_block') {
+              var n = (args && args.name || '').trim();
+              if(!n) { return Promise.reject(new Error('name is required')); }
+              sb.show(n);
+              if(chat) { chat.setBlock(n); }
+              // 不必等渲染: snapshot 自己會等 sandbox 的 rendering
+              return Promise.resolve('now showing ' + n);
+            }
             if(name !== 'snapshot') {
               return Promise.reject(new Error('unknown host tool: ' + name));
             }
@@ -75,6 +119,8 @@ createRuntime({api: API})
           brief: [
             '這個環境是一個 block 編輯器: 左邊是對話, 右邊即時渲染「目前開啟的 block」,',
             '下方是一個與你共用同一份 workspace 的終端機 (用戶可能會自己動檔案)。',
+            '你改到「目前開啟的 block」或 data/ 底下的檔案時, 預覽會自己重畫, 不必做什麼;',
+            '但建立新 block 之後要呼叫 open_block, 否則用戶看到的還是上一個。',
             '每輪對話開頭會附上一段 [application-context], 描述當下的狀況 — 那是執行環境給的,',
             '不是用戶說的話。以它為準, 不要用上一輪的狀況推測現在。'
           ].join('\n'),
@@ -94,7 +140,8 @@ createRuntime({api: API})
         });
       });
   })
-  .then(function(chat) {
+  .then(function(c) {
+    chat = c;
     chat.on('block', function(name) {
       history.replaceState(null, '', location.pathname + '?block=' + encodeURIComponent(name));
     });
