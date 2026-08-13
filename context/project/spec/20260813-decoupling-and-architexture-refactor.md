@@ -212,6 +212,40 @@ agent 需要的應用資訊有三種:
 而這次說謊的不是通道本身,是通道的**保留策略**。
 
 
+## 批次三:Tier 1 資料綁定 + 可編輯 sheet(已完成)
+
+拿 dataviz 應用層做一次真實驗證 —— 目的是確認 wagent 的設計概念站不站得住。
+
+做法:應用層持有文件狀態(`packages/dataviz/web/sheet-store.js`),
+頁面上用 `@plotdb/sheet` 讓使用者編輯,`dataFor(name)` 把解析好的 `{columns, rows}`
+餵給 block。欄位是**事先定義的維度**(label / value / series),
+所以讀進來不必猜型別 —— csv parser 因此比當初簡單。
+
+agent 這端以 `read_sheet` / `write_sheet` 兩個**應用層註冊的 tool** 存取試算表。
+esh 的 device backend 到位後,這兩個會變成 `/dev/sheet` 的讀寫,
+agent 就能直接用 `grep` / `wc` 去 query,不必再多兩個 tool。
+
+### 驗證結果
+
+ - agent 產出的 block **完全沒有讀檔**:用 `opt.data.rows`,
+   沒有 `loadText` / `fetch` / 任何路徑字串 —— 真正可攜
+ - 使用者改試算表 → 圖表重畫(`changedRatio 0.27`)
+ - agent 用 `write_sheet` 換掉整份資料 → 試算表 UI 與圖表同時更新
+ - 重繪的決定全在應用層,chat 與 wagent 都沒有參與
+
+### 過程中抓到的問題
+
+**store 與 sheet UI 分岔。** 一開始只在 `write_sheet` 的處理裡同步 UI
+(`sh.data(store.raw())`),結果從其他來源改 store 時,**畫面顯示舊資料、圖表卻是新的**。
+
+這是「單一真相」沒有貫徹的典型症狀:store 是真相,但同步掛在某一條特定寫入路徑上,
+於是每多一條路徑就多一個分岔點。改成掛在 store 的變更事件上 —— UI 是視圖,
+任何來源的變更都走同一條同步線。
+
+形狀上這跟 esh 那兩個 bug(記憶體鏡像 vs 實際內容)、跟 snapshot 的過期畫面
+是同一件事:**兩份狀態、一條沒有貫徹的同步線**。
+
+
 ## 附帶記錄:又一個 esh OPFS bug
 
 用較短內容覆寫檔案時 OPFS **不截斷**,舊內容的尾巴留著。session 內讀不出來

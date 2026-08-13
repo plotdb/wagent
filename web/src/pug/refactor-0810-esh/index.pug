@@ -11,6 +11,8 @@ html
     script(src="/assets/lib/@plotdb/csscope/main/index.min.js")
     script(src="/assets/lib/@plotdb/rescope/main/index.min.js")
     script(src="/assets/lib/@plotdb/block/main/index.min.js")
+    link(rel="stylesheet" href="/assets/lib/@plotdb/sheet/main/index.min.css")
+    script(src="/assets/lib/@plotdb/sheet/main/index.min.js")
     link(rel="stylesheet" href="/assets/lib/@plotdb/esh/main/esh-term.iife.css")
     script(src="/assets/lib/@plotdb/esh/main/esh-term.iife.js")
     style(type="text/css").
@@ -19,6 +21,10 @@ html
       #chat-root { width: 420px; min-width: 320px; border-right: 1px solid #ddd; background: #fff; }
       .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
       #sandbox-root { flex: 1; min-height: 0; padding: 20px; overflow: auto; }
+      .sheet-pane { height: 200px; border-top: 1px solid #ddd; background: #fff; display: flex; flex-direction: column; }
+      .sheet-bar { font: 11px Menlo, monospace; color: #888; padding: 4px 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+      .sheet-bar b { color: #333; font-weight: 600; }
+      #sheet-root { flex: 1; min-height: 0; overflow: hidden; }
       .term-pane { height: 240px; border-top: 1px solid #ddd; background: #1e1e1e; display: flex; flex-direction: column; }
       .term-bar { font: 11px Menlo, monospace; color: #aaa; padding: 4px 10px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; }
       .term-bar b { color: #ddd; font-weight: 600; }
@@ -27,6 +33,13 @@ html
     #chat-root
     .main
       #sandbox-root
+      .sheet-pane
+        .sheet-bar
+          span
+            b sheet
+            |  — 資料由應用層持有, 改這裡圖會跟著重畫
+          span#sheet-info
+        #sheet-root
       .term-pane
         .term-bar
           span
@@ -37,6 +50,12 @@ html
 
     script(type="module").
       import {createRuntime} from '/assets/lib/@plotdb/wagent/main/runtime/client.js';
+      import {createStore} from '/assets/lib/dataviz/main/sheet-store.js';
+
+      // ── 應用層的文件狀態 ──────────────────────────────────────────────
+      // 資料由應用層持有 (Tier 1)。block 拿到的是「值」, 不是檔案路徑 —
+      // 對照 makechart 的 host.local.raw / composer 的 nodemgr。
+      var store = createStore();
 
       var params = new URLSearchParams(location.search);
       var blockName = params.get('block');  // null = 新增模式
@@ -80,16 +99,48 @@ html
         .then(function(rt) {
           // ── 應用層決定 block 拿到什麼資料 ──────────────────────────────
           // wagent 對資料的語意一無所知, 它只負責把這個物件交給 block。
-          // 這個測試框架目前給的是 loader (block 自己按路徑讀), 那是過渡做法 —
-          // 正解是文件狀態(對照 makechart 的 sharehub / composer 的 nodemgr):
-          // 由應用層持有資料本身, 直接餵值進去, block 不必知道任何路徑。
+          // 給的是解析好的值 ({columns, rows}), block 不讀檔、不持有路徑,
+          // 換個環境換份資料就能跑。
+          //
+          // loadText / loadJSON 仍附上, 給還在用舊寫法的既有 block (過渡)。
           var dataFor = function(name) {
-            return {loadText: rt.io.loadText, loadJSON: rt.io.loadJSON};
+            var v = store.value();
+            return {
+              columns: v.columns, rows: v.rows,
+              loadText: rt.io.loadText, loadJSON: rt.io.loadJSON
+            };
           };
           return create('sandbox', document.getElementById('sandbox-root'),
                         {api: API, io: rt.io, data: dataFor})
             .then(function(sb) {
               window.sb = sb;  // 方便在 console 觀察 (sb.snapshot)
+              window.store = store;
+
+              // ── 試算表: 使用者編輯資料的地方 ────────────────────────────
+              var sheetInfo = document.getElementById('sheet-info');
+              function showInfo() {
+                sheetInfo.textContent = store.value().rows.length + ' rows x ' +
+                  store.dimensions.length + ' cols';
+              }
+              var sh = window.__sh = new sheet({root: '#sheet-root', data: store.raw()});
+              var fromSheet = false;
+              sh.on('change', function() {
+                fromSheet = true;
+                store.setRaw(sh.data());
+                fromSheet = false;
+              });
+              // 文件狀態變了 -> 應用層決定重畫。與 fs 變更是同一個模式:
+              // 「我正在看的東西變了」由應用層判斷, 不是 chat 也不是 agent。
+              //
+              // store 是唯一真相, sheet UI 只是它的一個視圖 — 所以同步要放在這裡,
+              // 而不是放在某個特定的寫入路徑上。之前只在 write_sheet 裡同步,
+              // 結果從別的來源改 store 時 UI 就跟真值分岔了 (畫面顯示舊資料, 圖卻是新的)。
+              store.on(function() {
+                showInfo();
+                if(!fromSheet) { sh.data(store.raw()); }
+                if(sb.current()) { sb.refresh(); }
+              });
+              showInfo();
               // sandbox 即 host 的觀察通道: 把 snapshot 交給 agent
               // ── 誰決定重畫: application ────────────────────────────────
               // 兩件不同的事:
@@ -116,6 +167,21 @@ html
                 // 應用層自己的 tool。wagent 不需要知道「block」是什麼 —
                 // composer 在這裡註冊的會是「開啟某個 node」之類的東西。
                 tools: [{
+                  name: 'read_sheet',
+                  description: 'Read the spreadsheet the user is editing, as CSV (first row is the header). ' +
+                    'This is where the chart data comes from. Read it before overwriting — the user may already have their own data.',
+                  parameters: {type: 'object', properties: {}, additionalProperties: false}
+                }, {
+                  name: 'write_sheet',
+                  description: 'Replace the whole spreadsheet with the given CSV (first row must be the header). ' +
+                    'Use this to put sample data in. The chart redraws automatically.',
+                  parameters: {
+                    type: 'object',
+                    properties: {csv: {type: 'string', description: 'full CSV including the header row'}},
+                    required: ['csv'],
+                    additionalProperties: false
+                  }
+                }, {
                   name: 'open_block',
                   description: 'Show a block in the preview pane, making it the current editing target. ' +
                     'Call this after creating a NEW block — otherwise the user keeps looking at the previous one. ' +
@@ -128,6 +194,13 @@ html
                   }
                 }],
                 run: function(name, args) {
+                  if(name === 'read_sheet') {
+                    return Promise.resolve(store.toCSV());
+                  }
+                  if(name === 'write_sheet') {
+                    var n = store.fromCSV(args && args.csv);
+                    return Promise.resolve('sheet now has ' + n + ' data rows');
+                  }
                   if(name === 'open_block') {
                     var n = (args && args.name || '').trim();
                     if(!n) { return Promise.reject(new Error('name is required')); }
@@ -148,7 +221,9 @@ html
                 // 靜態: 這是什麼應用。併進 system prompt (快取前綴)
                 brief: [
                   '這個環境是一個 block 編輯器: 左邊是對話, 右邊即時渲染「目前開啟的 block」,',
-                  '下方是一個與你共用同一份 workspace 的終端機 (用戶可能會自己動檔案)。',
+                  '中間是一張試算表 — 圖表的資料來源, 用戶可以直接編輯, 改了圖就會重畫。',
+                  '資料不在檔案系統裡: 你用 read_sheet / write_sheet 存取它, block 則由執行環境注入 opt.data。',
+                  '最下面是一個與你共用同一份 workspace 的終端機 (用戶可能會自己動檔案)。',
                   '你改到「目前開啟的 block」或 data/ 底下的檔案時, 預覽會自己重畫, 不必做什麼;',
                   '但建立新 block 之後要呼叫 open_block, 否則用戶看到的還是上一個。',
                   '每輪對話開頭會附上一段 [application-context], 描述當下的狀況 — 那是執行環境給的,',
@@ -157,9 +232,15 @@ html
                 // 動態: 現在是什麼狀況。每輪取一次, 附在對話尾端
                 context: function() {
                   return rt.io.listBlocks().then(function(list) {
+                    var v = store.value();
                     return {
                       openedBlock: sb.current() || null,
-                      blocks: list.map(function(b) { return b.name; })
+                      blocks: list.map(function(b) { return b.name; }),
+                      sheet: {
+                        columns: v.columns.map(function(c) { return c.name + ':' + c.type; }),
+                        rowCount: v.rows.length,
+                        firstRow: v.rows[0] || null
+                      }
                     };
                   });
                 }

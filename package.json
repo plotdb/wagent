@@ -21,6 +21,7 @@
     "@plotdb/guides": "github:plotdb/guides#master",
     "@plotdb/rescope": "^5.0.17",
     "@plotdb/semver": "^0.0.4",
+    "@plotdb/sheet": "^0.7.1",
     "@plotdb/srcbuild": "^0.0.70",
     "@zumer/snapdom": "^2.24.1",
     "express": "^5.2.1",
@@ -41,7 +42,12 @@
         "dir": "web"
       },
       "@plotdb/esh",
-      "@zumer/snapdom"
+      "@zumer/snapdom",
+      "@plotdb/sheet",
+      {
+        "name": "dataviz",
+        "dir": "web"
+      }
     ]
   }
 }

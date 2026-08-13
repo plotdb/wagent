@@ -30,6 +30,13 @@
      `rt.onFsChange` 讓應用層自己決定要不要重畫。
      另外把「換一個東西給我看」拆成應用層註冊的 `open_block` tool —
      先前是用 `write_file` 的路徑去猜,兩件事混在一起,而且只猜得到 agent
+   - **Tier 1 資料綁定(dataviz 應用層)**:資料改由應用層持有,以「值」餵給 block —
+     `opt.data = {columns, rows}`,block 不讀檔、不持有任何路徑。
+     `packages/dataviz/web/sheet-store.js` 是文件狀態(對照 makechart 的 `local.raw`),
+     頁面上以 `@plotdb/sheet` 讓使用者直接編輯,改動即重畫。
+     agent 以 `read_sheet` / `write_sheet` 存取(esh 的 device backend 到位後會變成 `/dev/sheet`)。
+     csv parser 回到應用層 `packages/dataviz/web/csv.js` — 欄位型別由 dimensions 宣告,
+     不再需要「整欄都是數字才轉」那套推測
    - **應用層把自己講給 agent 聽**:`registerHost({tools, run, brief, context})` —
      `brief`(靜態,這是什麼應用)併進 system prompt;`context`(動態,現在什麼狀況)
      每輪取一次附在對話尾端。少了它,應用自己的文件狀態(composer 的 tree、
