@@ -43,6 +43,10 @@ fs 本身由 esh / zenfs 提供;host 決定掛什麼、掛在哪、可否寫入�
 但要注意縮到單一 block 目錄後 agent 就**建不了新 block**、也看不到掛在 workspace 層的 device ——
 那是「應用決定編輯對象」的嵌入情境(composer / makechart)才適用,不是這個 demo 的工作流。
 
+**device 的範圍屬於 workspace**(已定案),不是單一 block —— 所以 block 內容放在
+約定的資料夾下(`blocks/<name>/`)。要做 per-block 的 chroot,前提是那個約定夠明確,
+而 device 若也要進 block 範圍則需要 esh 的執行期 mount(目前沒有)。
+
 **device 檔案**:應用層的文件狀態可以用檔案形式給 agent,它就能用 `cat` / `grep` / `wc` / `head -n` 去查:
 
     createRuntime({devices: ['sheet']})   ->  dev/sheet (唯讀 csv)
@@ -86,6 +90,10 @@ esh 實例,負責路徑操作與探索(`ls` / `cat` / `grep` / `find` / `mkdir` 
     snapshot({image, mode, width, height, time, target}) -> {report, image?}
 
  - `report`(必回):空白偵測、渲染錯誤、與上一張的差異量。便宜,不花 vision token。
+ - **取樣前要等畫面穩定**(連續兩次取樣一致),不是等「有東西」。
+   只等「有東西」是為重掛路徑設計的;增量更新沒有空白階段,會取樣到動畫中途,
+   報出 `changedRatio: 0` —— 而 agent 被教的是「剛改過卻沒變就回去查」,於是去修一個好好的 block。
+   永遠不穩定的動畫類回報 `stillChanging` 並講明差異量不可信(那種情況該用 `pause` / `seek`)
  - **snapshot 只觀察,不驅動渲染。** 它等進行中的渲染,但不自己發動重繪 ——
    「什麼時候重畫」是應用層的事(fs 變更 / 資料變更都由它判斷)。
    先前這裡預設會 refresh,那是重繪決定移交應用層之前的遺留;留著會讓

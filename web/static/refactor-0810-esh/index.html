@@ -14,6 +14,7 @@ body { margin: 0; font-family: -apple-system, "Helvetica Neue", "PingFang TC", s
 // 開發期避免模組快取 (與上面 block registry 的 ?t= 同一個理由) —
 // 沒有它時改了 app 程式碼卻沒生效, 會被誤判成邏輯有問題
 const {createStore} = await import('/assets/lib/dataviz/main/sheet-store.js?t=' + Date.now());
+const {seed} = await import('/assets/lib/dataviz/main/seed.js?t=' + Date.now());
 
 // ── 應用層的文件狀態 ──────────────────────────────────────────────
 // 資料由應用層持有 (Tier 1)。block 拿到的是「值」, 不是檔案路徑 —
@@ -59,7 +60,10 @@ createRuntime({api: API, devices: ['sheet']})
     eshTerm.createTerminal(document.getElementById('term-root'), {
       worker: rt.worker, home: rt.root
     });
-    return rt;   // base 層不必預載: block 的 pkg.extend 會自己經 manager 解析
+    // workspace 的初始內容由應用層植入 (wagent 不決定新使用者看到什麼)
+    return seed(rt.io).catch(function(e) {
+      console.warn('seed failed', e);
+    }).then(function() { return rt; });   // base 層不必預載: block 的 pkg.extend 會自己經 manager 解析
   })
   .then(function(rt) {
     // ── 應用層決定 block 拿到什麼資料 ──────────────────────────────

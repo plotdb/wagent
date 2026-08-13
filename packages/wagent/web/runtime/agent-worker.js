@@ -17,52 +17,6 @@ const params = new URL(self.location.href).searchParams;
 const api = params.get('api') || '/api/agent';
 const eshUrl = params.get('esh') || '/assets/lib/@plotdb/esh/main/esh.js';
 
-const SEED = {
-  'data/sales.csv': [
-    'month,revenue,orders',
-    '2026-01,128000,340',
-    '2026-02,115200,301',
-    '2026-03,142900,388',
-    '2026-04,156300,411',
-    '2026-05,149800,395',
-    '2026-06,171400,455',
-    ''
-  ].join('\n'),
-  'blocks/sample-bar/index.html': `<div>
-  <div class="wrap"><canvas></canvas></div>
-  <style>
-    .wrap { height: 400px; }
-  </style>
-  <script type="@plotdb/block">
-    module.exports = {
-      pkg: {
-        name: 'sample-bar',
-        version: 'main',
-        description: '每月營收長條圖 (Chart.js), 讀取 data/sales.csv'
-      },
-      init: function(opt) {
-        var canvas = opt.root.querySelector('canvas');
-        return opt.data.loadText('data/sales.csv').then(function(text) {
-          var rows = d3.csvParse(text);
-          new Chart(canvas, {
-            type: 'bar',
-            data: {
-              labels: rows.map(function(r) { return r.month; }),
-              datasets: [{
-                label: 'Revenue',
-                data: rows.map(function(r) { return +r.revenue; }),
-                backgroundColor: '#2b6cb0'
-              }]
-            },
-            options: {responsive: true, maintainAspectRatio: false}
-          });
-        });
-      }
-    };
-  <\/script>
-</div>
-`
-};
 
 const esh = await import(eshUrl);
 
@@ -102,12 +56,9 @@ try {
   persist = `in-memory (OPFS 掛載失敗: ${e.message})`;
 }
 
-// 首次使用才 seed (持久化資料不可蓋)
-for(const [p, content] of Object.entries(SEED)) {
-  const full = `${ROOT}/${p}`;
-  const r = await sh.run(`test -e ${full}`);
-  if(r.code !== 0) { await sh.io.writeFile(full, content); }
-}
+// workspace 的初始內容由**應用層**植入 (見 packages/dataviz/web/seed.js):
+// 種什麼範例、要不要種, 都是領域決定 — 一個拿 wagent 做遊戲的人不需要長條圖。
+await sh.run(`mkdir -p ${ROOT}`);
 await sh.run(`cd ${ROOT}`);
 
 // ── fs 變更事件 ───────────────────────────────────────────────────────

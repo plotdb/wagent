@@ -280,6 +280,12 @@
           if(sig === null) {
             sig = 'dom:' + r.elements + ':' + text.slice(0, 120);
           }
+          if(env && env.settled === false) {
+            r.stillChanging = true;
+            r.hint = (r.hint ? r.hint + ' ' : '') +
+              'the picture was still changing when sampled — it did not settle within the budget. ' +
+              'treat changedRatio as unreliable here; for animations use pause / seek for a reproducible frame.';
+          }
           r.blank = blank;
           // block 根本沒跑起來時, 畫面當然是空的 — 這時給「容器沒高度」「資料沒進到繪圖」
           // 這種提示只會把 agent 帶去修一個不存在的問題。錯誤本身才是唯一該看的東西。
@@ -333,14 +339,29 @@
 
         // 剛掛上的 block 通常還在非同步載資料, 畫完也還有動畫 (Chart.js 預設 1s),
         // 只等兩個 frame 會抓到空白。有 canvas 就輪詢到真的有畫東西為止 (或耗盡預算)。
+        // 等畫面**穩定**再取樣, 不是等「有東西」。
+        //
+        // 舊版只輪詢到 ratio > 0.005 為止 — 那是為重掛路徑設計的 (空白 -> 出現內容)。
+        // 增量更新 (client.data) 沒有空白階段, 第一次輪詢就返回, 於是取樣落在
+        // Chart.js 動畫中途、甚至更新之前, 報告就會說 changedRatio: 0 ——
+        // 而 prompt 明白告訴 agent「你剛改過卻沒變, 就回去查原因」, 它會去修一個好好的 block。
+        //
+        // 現在的條件是「連續兩次取樣一致, 且不是空白」。動畫類永遠不會穩定,
+        // 所以會用滿 budget 並回報 settled: false — 那種情況本來就該用 pause / seek。
         function settle(el, budget) {
           return frames().then(function(rafFired) {
             var canvas = el && el.querySelector('canvas');
-            if(!canvas) { return {rafFired: rafFired}; }
+            if(!canvas) { return {rafFired: rafFired, settled: true}; }
             var deadline = Date.now() + (budget || 0);
+            var prev = null;
             var poll = function() {
               var s = sampleCanvas(canvas);
-              if(!s || s.ratio > 0.005 || Date.now() > deadline) { return {rafFired: rafFired}; }
+              if(!s) { return {rafFired: rafFired, settled: true}; }
+              var stable = prev !== null && s.cells === prev && s.ratio > 0.005;
+              if(stable || Date.now() > deadline) {
+                return {rafFired: rafFired, settled: !!stable};
+              }
+              prev = s.cells;
               return new Promise(function(r) { setTimeout(r, 100); }).then(poll);
             };
             return poll();

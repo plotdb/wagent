@@ -23,6 +23,9 @@
      `create('sandbox', el, {data: function(blockName) {...}})`,不給就是空的。
      wagent 對「資料」的知識歸零,只把應用層給的物件原封不動交給 block
      (之後 composer 換 nodemgr、makechart 換 sharehub,換的是同一個位置)
+   - workspace 的初始內容(範例 block)改由**應用層**植入(`packages/dataviz/web/seed.js`)—
+     「新使用者第一次看到什麼」是領域決定;順帶把範例改成目前教的資料流
+     (`opt.data.rows` + `client.data`),不再示範已淘汰的讀檔寫法
    - `packages/dataviz`:領域知識(d3 / Chart.js 慣例)搬出 wagent 成為獨立應用層,
      以 `purpose` 代入;wagent 不給 purpose 就是一個純粹的 block 編輯環境
    - **重繪的決定移到 application**:worker 發 `fs-change`(包在 shell 物件上,
@@ -70,6 +73,12 @@
      有 error 就只講 error
    - 使用者在終端機改檔(或任何非 write_file 的變更)不會觸發重繪 — 先前只認
      `write_file` / `edit_file` 的路徑;改由 fs 變更事件驅動後,`sed -i` 也會重畫
+   - **`settle()` 在增量更新路徑上失效**:它只輪詢到「畫面有東西」為止,
+     那是為重掛路徑(空白 → 出現內容)設計的。`client.data` 沒有空白階段,
+     第一次輪詢就返回,於是取樣落在動畫中途甚至更新之前 —— 報告說 `changedRatio: 0`,
+     而 prompt 明白教 agent「你剛改過卻沒變就回去查」,它會去修一個好好的 block。
+     改成等**畫面穩定**(連續兩次取樣一致且非空白);永遠不穩定的動畫類回報
+     `stillChanging: true` 並講明差異量不可信
    - `client.implements` 漏報 `data`(`CLIENT_CAPS` 沒收錄),block 明明實作了卻不出現在報告裡
    - `sheet-store` 把內部陣列的參考交給 sheet widget,widget 就地補空白列 —
      `setRaw(4 列)` 同一次呼叫內變成 29 列,文件狀態被畫面狀態污染
