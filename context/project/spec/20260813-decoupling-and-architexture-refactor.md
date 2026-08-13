@@ -181,9 +181,35 @@ agent 需要的應用資訊有三種:
 目標:**wagent 這層對「資料」的知識歸零** — 它只知道有一個 `opt.data` 會交給 block,
 內容是什麼它不看也不碰。之後 composer 換 nodemgr、makechart 換 sharehub,換的是同一個位置。
 
-**批次二(之後):application → agent 的知識管道**
+**批次二:application → agent 的知識管道 — 已完成**
 
-上一節的 `brief` / `context`。會改 `registerHost` 的形狀與 prompt 的組裝路徑,單獨驗。
+`registerHost({tools, run, brief, context})`。實測四項:
+
+ - 應用層切換畫面後(不經過 agent),agent 下一輪就知道 — 且**不用任何 tool**
+ - `context` 拋錯時 agent 回「無法確定」,而不是沿用上一輪狀態
+ - 19929 字元的 context 截到 2000,agent 正確回報被截斷且看不到尾端的 marker
+ - **舊 context 不能整個刪掉**(見下)
+
+`purpose` 維持由 server 代入(`server.js` 就是應用層的進入點,沒有分層問題);
+瀏覽器端的應用要動態補充就用 `brief`,兩者相加。
+
+### 實測抓到的新問題:刪掉舊 context 會讓 agent 編出不存在的錯誤
+
+第一版把歷史裡舊的 context **整個移除**(理由:過期狀態會被當成現在)。
+結果使用者自己把畫面切到別的 block 之後:
+
+> 現在開啟的是 sokoban-game。**不一樣;我上一則誤答成 sample-bar,抱歉。**
+
+它上一則是**對的**。移除佔位之後,模型看到的歷史裡只有自己說過 sample-bar、
+而現在的狀況是 sokoban-game,沒有任何證據顯示那當時為真 ——
+於是它無法區分「狀況變了」與「我搞錯了」,選了後者,並向使用者道歉一個不存在的錯誤。
+
+修法:舊 context 換成佔位(內容省掉、保留「當時有一份」這個事實),
+並在每輪的 context 裡明說狀況會在兩輪之間改變、不一致時預設是狀況變了。
+修完再測:「這跟我上一則回答的不一樣(上一則是 sample-bar)」— 陳述變化,不再道歉。
+
+這是同一個主題的第 N 個實例:**觀察通道的價值取決於它報告的是不是真相**,
+而這次說謊的不是通道本身,是通道的**保留策略**。
 
 
 ## 附帶記錄:又一個 esh OPFS bug

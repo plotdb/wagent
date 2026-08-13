@@ -16,15 +16,32 @@ export function createRuntime(opt) {
   let seq = 0;
   const pending = {};
 
-  // host 提供的非檔案系統 tool。snapshot 一定要有 (見 context/project/host.md),
-  // 額外的 tool 定義會轉給 worker 併進 LLM tool 清單。
-  const host = {tools: [], run: null};
+  // host / 應用層對 agent 開的窗口 (見 context/project/host.md):
+  //  - tools / run — 能做什麼 (非檔案系統的 tool; snapshot 一定要有)
+  //  - brief       — 這是什麼應用、慣例是什麼 (靜態, 併進 system prompt)
+  //  - context     — 現在是什麼狀況 (動態, 每輪取一次, 附在對話尾端)
+  //
+  // 少了 brief / context, agent 就只看得到檔案與畫面 — 應用自己的文件狀態
+  // (composer 的 node tree、makechart 的 raw/bind) 對它是全盲的, 而它會用猜的。
+  const host = {tools: [], run: null, brief: null, context: null};
 
   function registerHost(o) {
     o = o || {};
     host.tools = o.tools || [];
     host.run = o.run || null;
+    host.brief = typeof o.brief === 'function' ? o.brief : (o.brief ? function() { return o.brief; } : null);
+    host.context = typeof o.context === 'function' ? o.context : null;
     worker.postMessage({type: 'host-tools', tools: host.tools});
+    Promise.resolve()
+      .then(function() { return host.brief ? host.brief() : null; })
+      .catch(function() { return null; })
+      .then(function(brief) {
+        worker.postMessage({
+          type: 'host-info',
+          brief: brief == null ? null : String(brief),
+          hasContext: !!host.context
+        });
+      });
   }
 
   // worker 的 postMessage 是廣播: 一律以 id 過濾出自己的訊息
@@ -39,10 +56,12 @@ export function createRuntime(opt) {
           error: ok ? undefined : String((payload && payload.message) || payload)
         });
       };
-      if(!host.run) { return done(false, `host tool not available: ${msg.name}`); }
+      const fn = msg.kind === 'context'
+        ? (host.context && function() { return host.context(); })
+        : (host.run && function() { return host.run(msg.name, msg.args || {}); });
+      if(!fn) { return done(false, `host ${msg.kind || 'tool'} not available: ${msg.name}`); }
       try {
-        Promise.resolve(host.run(msg.name, msg.args || {}))
-          .then(function(r) { done(true, r); }, function(e) { done(false, e); });
+        Promise.resolve(fn()).then(function(r) { done(true, r); }, function(e) { done(false, e); });
       } catch(e) { done(false, e); }
       return;
     }

@@ -96,20 +96,44 @@ let current = null;  // 進行中 request 的 id, 供 tool 事件標記
 // tool 清單 = 固定的 shell / content ops / snapshot + host 註冊的額外項目。
 // session 建立時取一次; 之後才註冊的 tool 只對新 session 生效。
 let hostTools = [];
+let hostBrief = null;      // 靜態: 這是什麼應用 (併進 system prompt)
+let hasHostContext = false;
 const hostPending = {};
 let hostSeq = 0;
 const HOST_TIMEOUT = 20000;
+const CONTEXT_TIMEOUT = 3000;   // 每輪都要等, 不能讓應用層拖住整個對話
+const CONTEXT_LIMIT = 2000;     // 對照 blockState: 大小由應用層決定, 必須設界
 
-function hostCall(name, args) {
+function hostCall(name, args, opt) {
+  opt = opt || {};
   const id = `h${++hostSeq}`;
   return new Promise(function(resolve, reject) {
     const timer = setTimeout(function() {
       delete hostPending[id];
       reject(new Error(`${name} timed out (no response from host)`));
-    }, HOST_TIMEOUT);
+    }, opt.timeout || HOST_TIMEOUT);
     hostPending[id] = {resolve: resolve, reject: reject, timer: timer};
-    post({type: 'host-call', id: id, name: name, args: args || {}});
+    post({type: 'host-call', id: id, kind: opt.kind || 'tool', name: name, args: args || {}});
   });
+}
+
+// 每輪取一次應用層的狀況描述。
+// 失敗不能默默略過 — 那會讓 agent 以為「沒有狀況」而照舊往下做。
+// 拿不到就明講拿不到, 這跟 snapshot 的處理是同一個原則。
+function turnContext() {
+  if(!hasHostContext) { return Promise.resolve(null); }
+  return hostCall('context', {}, {kind: 'context', timeout: CONTEXT_TIMEOUT})
+    .then(function(v) {
+      if(v == null) { return null; }
+      const s = typeof v === 'string' ? v : JSON.stringify(v, null, 1);
+      if(s.length <= CONTEXT_LIMIT) { return s; }
+      return s.slice(0, CONTEXT_LIMIT) +
+        `\n…[truncated at ${CONTEXT_LIMIT} of ${s.length} chars — the application should summarise this]`;
+    })
+    .catch(function(e) {
+      return `(unavailable: ${String((e && e.message) || e)}) ` +
+        'the application state could not be read this turn — do not assume it is unchanged or empty.';
+    });
 }
 
 function getInfo() {
@@ -128,7 +152,8 @@ function getSession(key, block) {
       .then(function(r) { return r.json(); })
   ]).then(function(r) {
     const inf = r[0];
-    const system = r[1].system;
+    // brief 是靜態的, 放 system prompt (快取前綴); 每輪會變的走 turnContext 附在尾端
+    const system = hostBrief ? `${r[1].system}\n\n${hostBrief}` : r[1].system;
     const create = inf.provider === 'anthropic' ? createAnthropic : createOpenAI;
     const run = makeRunTool(sh, {
       log: function(name, input) {
@@ -170,6 +195,11 @@ self.addEventListener('message', function(ev) {
     hostTools = msg.tools || [];
     return;
   }
+  if(msg.type === 'host-info') {
+    hostBrief = msg.brief || null;
+    hasHostContext = !!msg.hasContext;
+    return;
+  }
   if(msg.type === 'host-result') {
     const p = hostPending[msg.id];
     if(!p) { return; }
@@ -186,9 +216,10 @@ self.addEventListener('message', function(ev) {
   queue = queue.then(function() {
     current = msg.id;
     const key = msg.session || msg.block || 'default';
-    return getSession(key, msg.block || null)
-      .then(function(session) {
-        return session.send(msg.text, {
+    return Promise.all([getSession(key, msg.block || null), turnContext()])
+      .then(function(r) {
+        return r[0].send(msg.text, {
+          context: r[1],
           onDelta: function(t) { post({type: 'chat-delta', id: msg.id, text: t}); }
         });
       })

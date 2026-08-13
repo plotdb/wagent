@@ -1,4 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
+import {pruneContext, userContent} from '../turn-context.js';
 
 // tool 結果可以是字串, 或 {text, image: {mediaType, data}} — anthropic 的 tool_result
 // content 支援 block 陣列, 圖可以直接放進去
@@ -98,7 +99,9 @@ export function createSession({system, tools, runTool, api, model}) {
 
   function send(text, cb) {
     const startLen = history.length;
-    history.push({role: 'user', content: text});
+    // 舊的狀況描述先清掉再附上本輪的 — 只有最新一份是真的
+    pruneContext(history);
+    history.push({role: 'user', content: userContent(text, cb && cb.context)});
     const events = [];
 
     function runBlocks(blocks, i, results) {

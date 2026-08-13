@@ -25,6 +25,11 @@
      (之後 composer 換 nodemgr、makechart 換 sharehub,換的是同一個位置)
    - `packages/dataviz`:領域知識(d3 / Chart.js 慣例)搬出 wagent 成為獨立應用層,
      以 `purpose` 代入;wagent 不給 purpose 就是一個純粹的 block 編輯環境
+   - **應用層把自己講給 agent 聽**:`registerHost({tools, run, brief, context})` —
+     `brief`(靜態,這是什麼應用)併進 system prompt;`context`(動態,現在什麼狀況)
+     每輪取一次附在對話尾端。少了它,應用自己的文件狀態(composer 的 tree、
+     makechart 的 raw/bind)對 agent 是全盲的,而它會用猜的。
+     有界(2000 字元截斷並講明)、取不到要明講、volatile 不進 system prompt(保住快取前綴)
  - bugfixes:
    - 要求 `time` 但 block 沒實作 `seek` 時默默回一張隨機影格,agent 會當成 t=N 的畫面;
      改成報告寫明 seek 未生效
@@ -34,6 +39,9 @@
      純色另報 `uniform` — 「畫了東西但沒有細節」與「什麼都沒畫」是兩回事
    - block 根本沒跑起來時仍給「容器沒高度」「資料沒進到繪圖」的提示,把 agent 帶去修不存在的問題;
      有 error 就只講 error
+   - 每輪的應用狀況若把歷史裡舊的整個刪掉,使用者自己切換畫面後 agent 會判定成
+     「我上次答錯了」並道歉一個不存在的錯誤(它上次是對的);改成留佔位,
+     讓模型分得出「狀況變了」與「我搞錯了」
    - **workaround**(esh 0.3.2 / OPFS):用較短內容覆寫檔案時 OPFS 不截斷,舊內容的尾巴留著。
      session 內讀不出來(記憶體鏡像是對的),重新整理後 block 變成「新內容 + 舊程式碼殘骸」。
      write_file / edit_file 先刪再寫繞過;已回報 esh,修好後拿掉

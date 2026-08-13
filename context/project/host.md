@@ -20,7 +20,7 @@ wagent 從「對話產生圖表」升級為**編輯宿主(host)**:提供一個�
 
 ## Host 介面契約
 
-一個環境要成為 **agent-compatible**,必須提供以下四塊,第五塊選用:
+一個環境要成為 **agent-compatible**,必須提供以下四塊,第五、六塊選用:
 
 ### 1. mounts — fs 組態
 
@@ -90,6 +90,32 @@ snapshot 的輸出也不落地到 workspace — 成果目錄只放成果。需�
 > 能用 fs 表達的走 content ops,能用指令表達的走 shell 自訂指令,兩者都不合適的才當 tool。
 > 典型是:**非檔案系統的操作、需要結構化參數、或要回傳二進位 / 非文字結果**。
 > `snapshot` 是這類的第一個成員(且因為必要而被提升為固定 tool)。
+
+### 6. brief / context — 應用層把自己講給 agent 聽
+
+    registerHost({tools, run, brief, context})
+
+wagent 的核心是 agent 做事,而 agent 需要懂**應用層**在幹嘛。少了這格,agent 只看得到
+檔案(shell)與畫面(snapshot);應用自己的文件狀態 —— composer 的 node tree、
+makechart 的 `raw` / `bind` —— 對它是全盲的,而**它會用猜的**。
+
+ - `brief`(靜態):這是什麼應用、慣例是什麼。併進 system prompt
+ - `context`(動態):現在是什麼狀況。**每輪取一次**,附在對話尾端
+
+**原則:push the index, pull the content。** 每輪推一份很小的摘要,細節由 agent 用指令去拉 ——
+與 report vs image 同一個形狀。不做純 pull,是因為這個專案一路上的失敗模式就是
+**agent 會對沒看過的東西編故事**;只能 pull 的狀態它就會用猜的。
+
+四個必要性質(都已實測):
+
+ - **有界**:`context` 超過 2000 字元截斷並講明原長度。大小由應用層決定,不設界就會重演
+   `blockState` 吐 19KB 那件事
+ - **失敗要明講**:取不到時附上 `(unavailable: ...)` 而不是靜靜略過 ——
+   靜靜略過會讓 agent 沿用上一輪的狀態繼續做
+ - **volatile 不進 system prompt**:system 是快取前綴,每輪都變的東西塞進去等於每輪打掉快取
+ - **舊的換成佔位,不能整個刪掉**:實測發現直接刪掉的話,使用者自己切換畫面後,
+   agent 看到現在的狀況與自己上一則回答不符,會判定成「我上次答錯了」並向使用者道歉 ——
+   它上次其實是對的。少了佔位,模型無法區分「狀況變了」與「我搞錯了」,於是**編出一個不存在的錯誤**
 
 
 ## Agent loop 的職責

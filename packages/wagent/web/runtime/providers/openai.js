@@ -1,4 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
+import {pruneContext, userContent} from '../turn-context.js';
 
 // browser 版 provider: 打後端 llm proxy (原生 wire format), 自行跑 tool loop。
 // 介面同後端 providers/*: createSession({system, tools, runTool}) -> {send(text, cb), reset()}
@@ -54,7 +55,9 @@ export function createSession({system, tools, runTool, api, model}) {
 
   function send(text, cb) {
     const startLen = history.length;
-    history.push({role: 'user', content: text});
+    // 舊的狀況描述先清掉再附上本輪的 — 只有最新一份是真的
+    pruneContext(history);
+    history.push({role: 'user', content: userContent(text, cb && cb.context)});
     const events = [];
 
     // tool 結果若帶圖: openai 的 tool message 只吃字串, 圖要另外補一則 user message

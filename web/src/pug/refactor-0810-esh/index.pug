@@ -100,6 +100,22 @@ html
                     // tool 結果可以是字串, 或 {text, image} — provider 各自轉成自己的格式
                     return r.image ? {text: text, image: r.image} : text;
                   });
+                },
+                // 靜態: 這是什麼應用。併進 system prompt (快取前綴)
+                brief: [
+                  '這個環境是一個 block 編輯器: 左邊是對話, 右邊即時渲染「目前開啟的 block」,',
+                  '下方是一個與你共用同一份 workspace 的終端機 (用戶可能會自己動檔案)。',
+                  '每輪對話開頭會附上一段 [application-context], 描述當下的狀況 — 那是執行環境給的,',
+                  '不是用戶說的話。以它為準, 不要用上一輪的狀況推測現在。'
+                ].join('\n'),
+                // 動態: 現在是什麼狀況。每輪取一次, 附在對話尾端
+                context: function() {
+                  return rt.io.listBlocks().then(function(list) {
+                    return {
+                      openedBlock: sb.current() || null,
+                      blocks: list.map(function(b) { return b.name; })
+                    };
+                  });
                 }
               });
               if(blockName) { sb.show(blockName); }
