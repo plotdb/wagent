@@ -56,9 +56,9 @@
    - 每輪的應用狀況若把歷史裡舊的整個刪掉,使用者自己切換畫面後 agent 會判定成
      「我上次答錯了」並道歉一個不存在的錯誤(它上次是對的);改成留佔位,
      讓模型分得出「狀況變了」與「我搞錯了」
-   - **workaround**(esh 0.3.2 / OPFS):用較短內容覆寫檔案時 OPFS 不截斷,舊內容的尾巴留著。
-     session 內讀不出來(記憶體鏡像是對的),重新整理後 block 變成「新內容 + 舊程式碼殘骸」。
-     write_file / edit_file 先刪再寫繞過;已回報 esh,修好後拿掉
+   - 用較短內容覆寫檔案時 OPFS 不截斷,舊內容的尾巴留著(session 內讀不出來,
+     重新整理後 block 變成「新內容 + 舊程式碼殘骸」)。**esh 0.4.0 已修**,
+     先前 write 前 unlink 的繞法已拆除
    - snapshot 在背景分頁永遠不 resolve(rAF 不觸發),改與 timeout 競賽
    - snapshot 抓到過期畫面(agent 在 tool loop 中途問,但畫面要整輪結束才重繪),改成預設先重繪
    - 失敗的 tool 在對話紀錄顯示成 ✓:tool 事件改分 `phase: 'start' | 'end'` 兩段
@@ -70,8 +70,9 @@
    - 沒要圖時模型會拿原始碼推測外觀還宣稱「已確認實際呈現」:tool description / prompt /
      報告內容三處收緊,`image: false` 時直接在報告裡寫明沒看到畫面
  - tweaks:
-   - `@plotdb/esh` 升到 0.3.2(OPFS 靜默資料遺失修復、redirect 回讀驗證、
-     sed `;` 多重運算式、grep `-c`/`-q` 與無符合 exit 1);API 無變動
+   - `@plotdb/esh` 升到 0.4.0(OPFS 靜默資料遺失、覆寫不截斷兩個修復;
+     新增 scoped root `createShell({root})` / `sh.chroot()` 與 device backend,尚未接);
+     API 無破壞性變動
    - `@plotdb/agent` 更名 `@plotdb/wagent`(`packages/agent` -> `packages/wagent`);
      專案定位由「對話生成圖表」升級為編輯宿主 (host),名稱與 repo 一致
    - `context/project/host.md`: Host 定義 — mounts / shell / content ops / snapshot / tools(選用)

@@ -17,7 +17,7 @@
     "@anthropic-ai/sdk": "^0.115.0",
     "@plotdb/block": "^5.7.3",
     "@plotdb/csscope": "^5.0.4",
-    "@plotdb/esh": "^0.3.2",
+    "@plotdb/esh": "^0.4.0",
     "@plotdb/guides": "github:plotdb/guides#master",
     "@plotdb/rescope": "^5.0.17",
     "@plotdb/semver": "^0.0.4",
