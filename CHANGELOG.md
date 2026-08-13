@@ -41,6 +41,10 @@
      沒實作(或它拋錯)才整個重掛。重掛會丟掉 block 的內部狀態,動畫類特別明顯。
      走 client 而非直接改 `inst.data`(host 不該動別人的內部狀態);
      `@plotdb/block` 的 `instance.update` 做好之後這層退位
+   - **agent 的 fs 範圍(chroot)**:agent 與終端機改用不同 shell、同一份 fs —
+     agent 關在 `root` 內(`pwd` 是 `/`、`cd ..` 出不去、`/etc/passwd` 不存在),
+     終端機不受限。預設 root 是 workspace,`rt.setAgentRoot()` 可再縮。
+     tool 的路徑因此改成 root-relative,不再前置 `/home/workspace`
    - **device 檔案**:應用層的文件狀態以唯讀檔案給 agent(`dev/sheet`,csv)—
      `cat` / `grep` / `wc` / `head -n` 直接查,不必為每種資料各開一個 tool。
      `createRuntime({devices: ['sheet']})` + `rt.setDevice(name, value)`;
@@ -83,7 +87,8 @@
    - 沒要圖時模型會拿原始碼推測外觀還宣稱「已確認實際呈現」:tool description / prompt /
      報告內容三處收緊,`image: false` 時直接在報告裡寫明沒看到畫面
  - tweaks:
-   - `@plotdb/esh` 升到 0.4.1(修 redirect 與 sync 寫入的佇列 race — 我方回報;
+   - `@plotdb/esh` 升到 0.4.2(device `head` 的 64KB NUL padding — 我方回報;
+     新增 `help` builtin;`sed` 僅支援 `s///`)。原 0.4.1(修 redirect 與 sync 寫入的佇列 race — 我方回報;
      實測 io→redirect ×30 / redirect 立即讀 ×30 / sed 交錯 ×20 全綠)。原 0.4.0(OPFS 靜默資料遺失、覆寫不截斷兩個修復;
      新增 scoped root `createShell({root})` / `sh.chroot()` 與 device backend,尚未接);
      API 無破壞性變動

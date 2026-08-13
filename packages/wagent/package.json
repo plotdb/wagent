@@ -15,6 +15,6 @@
     "openai": "^7.3.0"
   },
   "peerDependencies": {
-    "@plotdb/esh": ">=0.4.1"
+    "@plotdb/esh": ">=0.4.2"
   }
 }

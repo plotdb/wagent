@@ -31,6 +31,27 @@ fs 本身由 esh / zenfs 提供;host 決定掛什麼、掛在哪、可否寫入�
 
 同一份 host 定義前後端通用,差別只在 mount table。`@zenfs/core` 另有 `Fetch`(唯讀遠端)、`Port`(跨 worker)、`CoW` 等 backend 可用。
 
+**agent 與使用者的終端機用不同的 shell、同一份 fs**(esh 0.4.2 的 per-shell root):
+
+    sh       未限縮 — 終端機與主執行緒的 io (應用層要看整棵樹: 列 block、讀原始碼)
+    shAgent  createShell({root}) — "/" 即 root, cd .. / 絕對路徑 / glob 都穿不出去
+
+分開的理由:使用者仍想在整棵樹裡逛,agent 不該。共用一個 shell 就只能二選一。
+「人與 agent 操作同一份 working tree」不受影響 —— 分的是**視野**,不是資料。
+
+預設 root 是 workspace。`rt.setAgentRoot(path)` 可再縮(host 端 API,shell 內呼叫不到),
+但要注意縮到單一 block 目錄後 agent 就**建不了新 block**、也看不到掛在 workspace 層的 device ——
+那是「應用決定編輯對象」的嵌入情境(composer / makechart)才適用,不是這個 demo 的工作流。
+
+**device 檔案**:應用層的文件狀態可以用檔案形式給 agent,它就能用 `cat` / `grep` / `wc` / `head -n` 去查:
+
+    createRuntime({devices: ['sheet']})   ->  dev/sheet (唯讀 csv)
+    rt.setDevice('sheet', csv)            ->  更新內容
+
+值必須**同步**可讀(`readFileSync` 依 stat size 配 buffer),而真值在主執行緒,
+所以 worker 持一份**單向唯讀鏡像**;寫入走 tool,避免「worker 寫了但主執行緒還不知道」的雙向分岔。
+device 必須掛在 agent root 之內才看得到。
+
 路徑語意:
 
  - **沒有 cwd 的概念暴露給 block。** block 取資源時,相對路徑相對於**該 block 自己的目錄**(對齊 `@plotdb/block` 的 `path(p)`),不是頁面根。

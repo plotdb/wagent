@@ -13,7 +13,8 @@ export function createRuntime(opt) {
   // devices: 要以檔案形式提供給 agent 的應用層資料 (名單在建 shell 前就要定, readdir 由它決定)
   const devices = (o.devices || []).join(',');
   const url = `${o.worker}?api=${encodeURIComponent(o.api)}&esh=${encodeURIComponent(o.esh)}` +
-    (devices ? `&devices=${encodeURIComponent(devices)}` : '');
+    (devices ? `&devices=${encodeURIComponent(devices)}` : '') +
+    (o.agentRoot ? `&root=${encodeURIComponent(o.agentRoot)}` : '');
   const worker = new Worker(url, {type: 'module'});
   const prefix = `c${Math.random().toString(36).slice(2, 8)}-`;
   let seq = 0;
@@ -154,6 +155,11 @@ export function createRuntime(opt) {
           worker.postMessage({type: 'device-set', name: name, value: value});
         },
         devices: o.devices || [],
+        // agent 的可見範圍。應用層決定 — 它才知道編輯對象是什麼。
+        // 注意縮到單一 block 目錄後 agent 就建不了新 block、也看不到 workspace 層的 device。
+        setAgentRoot: function(path) {
+          worker.postMessage({type: 'agent-root', root: path});
+        },
         root: o.root, workerUrl: url
       };
     });

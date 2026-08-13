@@ -81,8 +81,11 @@ export const snapshotTool = {
 
 export const tools = shellTools.concat(contentTools, [snapshotTool]);
 
+// agent 的 shell 是 rooted 的 — 它的 "/" 就是 workspace (或應用層指定的範圍),
+// 所以路徑一律以 root 為準, 不再前置 /home/workspace。
 function resolve(p) {
-  return (p || '').charAt(0) === '/' ? p : `${ROOT}/${p}`;
+  const s = p || '';
+  return s.charAt(0) === '/' ? s : `/${s}`;
 }
 
 // 取代邏輯與錯誤訊息 (訊息要能讓 LLM 自我修正, 故寫明匹配數與下一步)

@@ -125,24 +125,41 @@ function mutates(cmdline) {
     return t && !READONLY.test(t);
   });
 }
-(function watchFs() {
-  const run = sh.run.bind(sh);
-  const write = sh.io.writeFile.bind(sh.io);
-  sh.run = function(cmdline) {
+function watchFs(target, prefix) {
+  const run = target.run.bind(target);
+  const write = target.io.writeFile.bind(target.io);
+  target.run = function(cmdline) {
     return run(cmdline).then(function(r) {
       // esh 沒有 watch, shell 執行完並不知道自己動了什麼 — 只能說「可能變了」。
-      // 寧可多報: 漏報是畫面停在舊的 (現在的行為), 多報只是多畫一次。
+      // 寧可多報: 漏報是畫面停在舊的 (先前的行為), 多報只是多畫一次。
       if(mutates(cmdline)) { post({type: 'fs-change', paths: null}); }
       return r;
     });
   };
-  sh.io.writeFile = function(p, c) {
+  target.io.writeFile = function(p, c) {
     return write(p, c).then(function(r) {
-      post({type: 'fs-change', paths: [p]});
+      // rooted shell 的路徑是相對 root 的, 補回絕對路徑, 應用層才比對得到
+      post({type: 'fs-change', paths: [prefix && p.charAt(0) === '/' ? prefix + p : p]});
       return r;
     });
   };
-})();
+}
+
+// ── agent 專用的 rooted shell ─────────────────────────────────────────
+// agent 與使用者的終端機用**不同的 shell、同一份 fs**:
+//  - sh      未限縮, 給終端機與主執行緒的 io (應用層要看整棵樹: 列 block、讀原始碼)
+//  - shAgent 關在 agentRoot 內 ("/" 即 agentRoot), cd .. / 絕對路徑 / glob 都穿不出去
+//
+// 為什麼要分開: 使用者仍想在整棵樹裡逛, agent 不該。共用同一個 sh 就只能二選一。
+// 「人與 agent 操作同一份 working tree」這個性質不受影響 — 分的是視野, 不是資料。
+//
+// 預設 root 是 workspace。要縮到單一 block 目錄的話由應用層指定 —
+// 但注意那會讓 agent 無法建立新 block, 也看不到掛在 workspace 層的 device,
+// 所以那是「應用決定編輯對象」的嵌入情境才適用 (composer / makechart)。
+const agentRoot = params.get('root') || ROOT;
+const shAgent = await esh.createShell({root: agentRoot});   // 不帶 mounts = 沿用已掛好的 fs
+watchFs(sh, null);                    // 終端機與主執行緒
+watchFs(shAgent, agentRoot);          // agent
 
 esh.serveShell(sh, self, {persist: persist, root: ROOT});
 
@@ -215,7 +232,7 @@ function getSession(key, block) {
     // brief 是靜態的, 放 system prompt (快取前綴); 每輪會變的走 turnContext 附在尾端
     const system = hostBrief ? `${r[1].system}\n\n${hostBrief}` : r[1].system;
     const create = inf.provider === 'anthropic' ? createAnthropic : createOpenAI;
-    const run = makeRunTool(sh, {
+    const run = makeRunTool(shAgent, {
       log: function(name, input) {
         // start: dispatch 當下就發, 讓畫面即時顯示「正在做什麼」
         post({type: 'chat-tool', id: current, phase: 'start', tool: name, input: input, error: false});
@@ -253,6 +270,11 @@ self.addEventListener('message', function(ev) {
   const msg = ev.data || {};
   if(msg.type === 'host-tools') {
     hostTools = msg.tools || [];
+    return;
+  }
+  if(msg.type === 'agent-root') {
+    // 應用層改變 agent 的可見範圍 (host 端 API, shell 內呼叫不到)
+    try { shAgent.chroot(msg.root); } catch(e) { post({type: 'agent-root-error', error: String(e.message || e)}); }
     return;
   }
   if(msg.type === 'device-set') {
