@@ -19,6 +19,10 @@
      沒實作就 fallback 泛用路徑。prompt 教 agent 寫出可被檢查的 block
    - snapshot 報告加 `client.implements` / `client.seek`:講明 block 實作了哪些能力、
      要求的 `time` 有沒有真的生效
+   - block 資料綁定:`blocks/<name>/block.json` 宣告要哪些資料,host 讀檔解析後注入
+     `opt.data.<key>` — block 不再自己讀檔,換個環境、換份資料就能跑。
+     `runtime/blockdata.js` 零依賴自帶 csv/tsv 解析(引號跳脫、整欄才轉數字,
+     郵遞區號這種前導零代碼不會被吃掉);解析失敗一次列齊所有壞掉的路徑
  - bugfixes:
    - 要求 `time` 但 block 沒實作 `seek` 時默默回一張隨機影格,agent 會當成 t=N 的畫面;
      改成報告寫明 seek 未生效
@@ -26,6 +30,11 @@
      2000 字元截斷並要求 block 改回摘要
    - 純色填滿的 canvas 被判成 blank(單一色階即視為空白);改成只有透明或接近全白才算空白,
      純色另報 `uniform` — 「畫了東西但沒有細節」與「什麼都沒畫」是兩回事
+   - block 根本沒跑起來時仍給「容器沒高度」「資料沒進到繪圖」的提示,把 agent 帶去修不存在的問題;
+     有 error 就只講 error
+   - **workaround**(esh 0.3.2 / OPFS):用較短內容覆寫檔案時 OPFS 不截斷,舊內容的尾巴留著。
+     session 內讀不出來(記憶體鏡像是對的),重新整理後 block 變成「新內容 + 舊程式碼殘骸」。
+     write_file / edit_file 先刪再寫繞過;已回報 esh,修好後拿掉
    - snapshot 在背景分頁永遠不 resolve(rAF 不觸發),改與 timeout 競賽
    - snapshot 抓到過期畫面(agent 在 tool loop 中途問,但畫面要整輪結束才重繪),改成預設先重繪
    - 失敗的 tool 在對話紀錄顯示成 ✓:tool 事件改分 `phase: 'start' | 'end'` 兩段

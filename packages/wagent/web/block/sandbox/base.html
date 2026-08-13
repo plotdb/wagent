@@ -34,6 +34,8 @@
         // snapdom: 出圖的泛用路徑 (DOM -> 圖)。canvas / svg / shadow DOM 它自己會處理,
         // 所以 Chart.js 與 d3 都不必特別對待。只在需要出圖時才動態載入。
         this.snapdomUrl = d.snapdom || '/assets/lib/@zumer/snapdom/main/dist/snapdom.mjs';
+        this.blockdataUrl = d.blockdata || '/assets/lib/@plotdb/wagent/main/runtime/blockdata.js';
+        this.blockdata = null;
         this.imageWidth = d.imageWidth || 800;   // 送進 LLM 的圖寬, 直接對應 token 成本
         this.captureTimeout = d.captureTimeout || 6000;
         this.snapdom = null;
@@ -277,14 +279,18 @@
             sig = 'dom:' + r.elements + ':' + text.slice(0, 120);
           }
           r.blank = blank;
-          if(blank) {
+          // block 根本沒跑起來時, 畫面當然是空的 — 這時給「容器沒高度」「資料沒進到繪圖」
+          // 這種提示只會把 agent 帶去修一個不存在的問題。錯誤本身才是唯一該看的東西。
+          if(r.error) {
+            r.hint = 'the block threw before it could render — fix the error above. ' +
+              'everything else in this report is a consequence of that, not a separate problem.';
+          } else if(!box.width || !box.height) {
+            r.hint = 'the container has zero width or height — give the chart/canvas wrapper an explicit size.';
+          } else if(blank) {
             // 背景分頁的空白不是 block 的錯 — 講清楚, 否則 agent 會去修一個不存在的 bug
             r.hint = (env && env.rafFired === false)
               ? 'the page is in a background tab so the browser froze its rendering pipeline — anything drawn via requestAnimationFrame (Chart.js animations, games) has not painted yet. this is very likely NOT a bug in the block; do not "fix" it based on this. ask the user to bring the tab to the front if you need to see it.'
               : 'the block rendered without throwing but looks empty — check the data actually reached the drawing code, and that the container has a non-zero size.';
-          }
-          if(!box.width || !box.height) {
-            r.hint = 'the container has zero width or height — give the chart/canvas wrapper an explicit size.';
           }
 
           // 與上次同情境 snapshot 的差異量: 判斷「這次改動到底有沒有讓畫面變」。
@@ -339,6 +345,31 @@
           });
         }
 
+        // block.json 的 data 宣告 -> 已解析好的資料。沒有 block.json 就是空的。
+        // 讀不到 / 不是合法 json 都不算錯 (block.json 本來就是選用的), 但 data 解析失敗要往上拋 —
+        // 少一份資料通常就是空白畫面, 靜靜吞掉只會讓 agent 去猜。
+        function blockData(name) {
+          return self.io.loadText('blocks/' + name + '/block.json')
+            .then(function(t) {
+              try { return JSON.parse(t); }
+              catch(e) { throw new Error('blocks/' + name + '/block.json is not valid JSON: ' + e.message); }
+            }, function() { return null; })
+            .then(function(meta) {
+              if(!meta || !meta.data) { return {}; }
+              return loadBlockData().then(function(bd) {
+                return bd.resolveData(meta.data, function(p) { return self.io.loadText(p); });
+              });
+            });
+        }
+
+        function loadBlockData() {
+          if(self.blockdata) { return Promise.resolve(self.blockdata); }
+          return import(self.blockdataUrl).then(function(m) {
+            self.blockdata = m;
+            return m;
+          });
+        }
+
         // 載入並執行 workspace 的 block。每次建新 manager 避免 cache 到舊版原始碼。
         function mount(name, el) {
           var mgr = new window.block.manager({
@@ -346,16 +377,18 @@
               return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
             }
           });
-          return self.io.loadText('blocks/' + name + '/index.html').then(function(code) {
+          return Promise.all([
+            self.io.loadText('blocks/' + name + '/index.html'),
+            blockData(name)
+          ]).then(function(r) {
             var cls = new window.block['class']({
-              name: name, version: 'main', code: code, manager: mgr
+              name: name, version: 'main', code: r[0], manager: mgr
             });
-            return cls.create({
-              root: el,
-              // block 內以 opt.data 讀 workspace 資料檔; host 另外提供同一組服務
-              data: {loadText: self.io.loadText, loadJSON: self.io.loadJSON},
-              host: hostObject()
-            });
+            // opt.data = block.json 解析後的資料。loadText / loadJSON 是舊路徑,
+            // 保留給還沒轉過來的 block, 新的 block 應該用 block.json 宣告。
+            var data = {loadText: self.io.loadText, loadJSON: self.io.loadJSON};
+            Object.keys(r[1]).forEach(function(k) { data[k] = r[1][k]; });
+            return cls.create({root: el, data: data, host: hostObject()});
           });
         }
 

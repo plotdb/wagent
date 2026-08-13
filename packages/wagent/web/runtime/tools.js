@@ -98,6 +98,18 @@ export function applyEdit(cur, input) {
   return {next: parts.join(input.new_string), count: count};
 }
 
+// WORKAROUND (esh 0.3.2, OPFS): 用較短的內容覆寫檔案時 OPFS 不會截斷,
+// 舊內容的尾巴會留著。session 內讀不出來 (記憶體鏡像是對的), 重新整理後才爆 —
+// block 變成「新內容 + 一段舊程式碼殘骸」。改短檔案是 agent 最常做的事之一,
+// 所以先在這裡繞過: 寫之前先刪掉。esh 修好後應該把這層拿掉。
+// 詳見 esh context/project/tasks/opfs-overwrite-no-truncate.md
+function safeWrite(sh, full, content) {
+  return Promise.resolve()
+    .then(function() { return sh.io.unlink ? sh.io.unlink(full) : sh.run(`rm -f '${full}'`); })
+    .catch(function() { /* 檔案不存在是正常情況 */ })
+    .then(function() { return sh.io.writeFile(full, content); });
+}
+
 // sh: esh shell (本地 createShell 或 connectShell 的 remote, 兩者同介面)
 // opt.log:  function(name, input) 供 worker 回報 tool 事件
 // opt.host: function(name, args) -> Promise<string>; shell / content 以外的 tool 一律轉給它
@@ -129,7 +141,7 @@ export function makeRunTool(sh, opt) {
     }
     if(name === 'write_file') {
       const full = resolve(input.path);
-      return sh.io.writeFile(full, input.content).then(function() {
+      return safeWrite(sh, full, input.content).then(function() {
         lastRead[full] = input.content;
         return `wrote ${input.path} (${input.content.length} chars)`;
       });
@@ -145,7 +157,7 @@ export function makeRunTool(sh, opt) {
           throw new Error(`${input.path} changed since you read it (edited elsewhere). read_file again before editing.`);
         }
         const r = applyEdit(cur, input);
-        return sh.io.writeFile(full, r.next).then(function() {
+        return safeWrite(sh, full, r.next).then(function() {
           lastRead[full] = r.next;
           return `edited ${input.path} (${r.count} replacement${r.count > 1 ? 's' : ''})`;
         });

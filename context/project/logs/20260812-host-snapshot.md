@@ -170,3 +170,85 @@ fedep 重新 pin 到 `/assets/lib/@plotdb/esh/0.3.2`。API 無變動,我們的�
    連續兩次 snapshot 得到 `changedSinceLast: false, changedRatio: 0`
  - 端到端(openai / gpt-5):「把長條圖改成橘色」→ read_file → edit_file → **snapshot**(模型自己叫的)
    → 回覆說明已改色並確認畫面正常。第二次「改成綠色」同樣走完
+
+
+---
+
+## 端到端驗證 client 協定, 與 block.json 資料綁定 (08/13)
+
+### 讓 agent 自己寫一個會動的 block
+
+先前 client 協定只用我手寫的測試 block 驗過。這次直接叫 agent 做
+「彈跳球動畫」, 看它會不會自己實作協定 — 會。它在第一句就說要
+「實作 client 介面讓執行環境可暫停/定位時間以利檢查」, 產出的 block
+四個都實作了 (pause / seek / state / capture)。
+
+seek 的可重現性也成立: `seek(3)` 兩次 `changedRatio` 為 0, `seek(9)` 才變。
+這正是動畫類 block 能做前後對照的前提。
+
+### 但報告在三個地方說謊
+
+同一輪測試抓到三個問題, 形狀都一樣 — **報告看起來很正常, 但講的不是實情**:
+
+1. **要求 `time` 但 block 沒實作 `seek`** → 默默回一張隨機影格。
+   agent 會拿它當 t=N 的畫面來比較, 而它其實是隨機的。
+   改成回報 `client.implements` 與 `client.seek`, 沒生效就明講。
+2. **`blockState` 大小由 block 決定** → 一個 400 entity 的 state 吐了 19KB。
+   「報告很便宜, 不花 vision token」這個賣點直接被打破。
+   2000 字元截斷 + 要求 block 改回摘要。
+3. **純色填滿的 canvas 被判成 blank** — `levels <= 1` 一律當空白。
+   但「全透明 / 全白」與「填滿 #39c」是兩件事, 後者是畫了東西。
+   改成只有透明或接近全白才算 blank, 純色另報 `uniform`。
+
+第四個在做資料綁定時冒出來: block 因為資料錯誤而**根本沒跑起來**時,
+報告仍給「容器沒有高度, 給 wrapper 一個明確尺寸」。這會讓 agent 去改 CSS。
+有 error 就只講 error, 其餘都是它的後果。
+
+這已經是這個觀察通道上第 N 個同類問題。結論不變:
+**誤導性的診斷比沒有診斷更糟** — 沒有報告 agent 會去查, 錯的報告 agent 會照做。
+
+### block.json 資料綁定
+
+block 不再自己讀檔, 改成宣告需求:
+
+    {"data": {"orders": "data/orders.csv", "cfg": {"src": "data/c.json", "type": "json"}}}
+
+init 直接拿 `opt.data.orders`(已解析)。這是 block 可攜性的關鍵 —
+發佈到 composer / makechart / 任意網頁時, 那邊沒有這個 workspace 也沒有 loadText。
+
+實作在 `runtime/blockdata.js`, 零依賴。兩個刻意的決定:
+
+ - **csv 自己解, 不用 d3。** host 不該因為「有人要畫圖」而拖進一個視覺化函式庫。
+ - **數值轉換以整欄為單位。** 逐格轉會讓同一欄混出 number 與 string, 下游排序與
+   比較會安靜地出錯; 前導零 (`007`, 郵遞區號) 也一律留字串。
+
+驗證: `qty` 轉 number、`code=007` 留 string、引號內的逗號與 `""` 跳脫都正確;
+壞路徑一次列齊全部再拋, 且讓 render 失敗 (不讓 block 拿著 undefined 畫出空白)。
+
+### 又一個 esh OPFS bug: 覆寫較短內容時不截斷
+
+做資料綁定時, block.json 改短後重新整理變成 `{...}` 加一段上一版的殘句,
+`JSON.parse` 直接爆掉。最小重現:
+
+    writeFile('probe.txt', 'A'.repeat(200))
+    writeFile('probe.txt', 'B'.repeat(20))
+    readFile('probe.txt')            // 20  ← session 內正確
+    // --- 重新整理 ---
+    readFile('probe.txt')            // 200: 20 個 B + 180 個 A
+
+跟 0.3.2 修掉的那個是同一個形狀(**記憶體鏡像正確、OPFS 實際內容不正確**),
+但成因不同 — 這次是寫入沒有 truncate。
+
+嚴重度高: 「把檔案改短」是 agent 最常做的事之一, 而且寫完當下所有檢查都會過,
+錯誤延遲到下一次載入才出現, 現場幾乎不可能歸因到寫檔。
+
+已回報 esh (`tasks/opfs-overwrite-no-truncate.md`)。wagent 這邊先在
+`write_file` / `edit_file` 繞過(寫之前先刪), 實測經 agent 真實路徑寫入後
+重新整理內容乾淨。esh 修好後把這層拿掉。
+
+### 順帶
+
+`getDisplayMedia` 記進 host.md 未定案: snapdom 是 foreignObject 重繪,
+畫的是「瀏覽器依 DOM 重新畫一次」而非使用者真正看到的那張;
+getDisplayMedia 抓的是真實合成畫面, 適合當選用的高保真模式
+(代價是需要使用者手勢授權, agent 無法自行開啟)。

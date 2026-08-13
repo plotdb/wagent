@@ -133,6 +133,17 @@ snapshot 的輸出也不落地到 workspace — 成果目錄只放成果。需�
 
 **資料不透過 fs 給 block。** agent 讀寫檔,host 解析後把資料畫進去(對照 makechart 的 binder:chart block 拿到的是資料,不是檔案路徑)。這讓 block 可攜:換個 host、換份資料就能跑。
 
+實作:`blocks/<name>/block.json` 宣告需求,host 讀檔、依副檔名(或 `type`)解析後注入 `opt.data.<key>`。
+
+    {"data": {"orders": "data/orders.csv", "cfg": {"src": "data/c.json", "type": "json"}}}
+
+ - csv / tsv → 物件陣列;**整欄**都是數字才轉 number。逐格轉會讓同一欄混出 number 與 string,
+   下游的排序與比較會安靜地出錯,而且郵遞區號、產品編號這種前導零代碼會被吃掉
+ - 解析器自己寫(`runtime/blockdata.js`,零依賴)。host 不該因為「有人要畫圖」而拖進 d3
+ - 讀不到 / 解析失敗要**一次列出全部**再拋,而不是修一個發現下一個;
+   而且必須讓 render 失敗,別讓 block 拿著 undefined 畫出一片空白 — 空白會被歸因到別的地方
+ - `loadText` / `loadJSON` 仍在,給還沒轉過來的 block
+
 edge case:檔案多 / 大 / 動態的 block(遊戲素材、地圖圖磚)可能真的需要 fs 存取。這是 host 的選用能力,尚未實作;方向是 host 為每個 block instance 組一張掛載表(而非路徑白名單),並優先考慮用 Service Worker 把 fs 映成 URL 前綴,讓 block 維持標準 web 寫法(`fetch` / `<img src>` / CSS `url()`)。
 
 
