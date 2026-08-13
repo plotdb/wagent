@@ -10,7 +10,10 @@ const DEFAULTS = {
 
 export function createRuntime(opt) {
   const o = Object.assign({}, DEFAULTS, opt || {});
-  const url = `${o.worker}?api=${encodeURIComponent(o.api)}&esh=${encodeURIComponent(o.esh)}`;
+  // devices: 要以檔案形式提供給 agent 的應用層資料 (名單在建 shell 前就要定, readdir 由它決定)
+  const devices = (o.devices || []).join(',');
+  const url = `${o.worker}?api=${encodeURIComponent(o.api)}&esh=${encodeURIComponent(o.esh)}` +
+    (devices ? `&devices=${encodeURIComponent(devices)}` : '');
   const worker = new Worker(url, {type: 'module'});
   const prefix = `c${Math.random().toString(36).slice(2, 8)}-`;
   let seq = 0;
@@ -146,6 +149,11 @@ export function createRuntime(opt) {
       return {
         worker: worker, sh: sh, io: io, transport: transport,
         registerHost: registerHost, onFsChange: onFsChange,
+        // 更新 device 檔案的內容。應用層是真相, 這裡只是把值推給 worker 的鏡像。
+        setDevice: function(name, value) {
+          worker.postMessage({type: 'device-set', name: name, value: value});
+        },
+        devices: o.devices || [],
         root: o.root, workerUrl: url
       };
     });

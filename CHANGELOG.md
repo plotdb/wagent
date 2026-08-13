@@ -41,6 +41,11 @@
      沒實作(或它拋錯)才整個重掛。重掛會丟掉 block 的內部狀態,動畫類特別明顯。
      走 client 而非直接改 `inst.data`(host 不該動別人的內部狀態);
      `@plotdb/block` 的 `instance.update` 做好之後這層退位
+   - **device 檔案**:應用層的文件狀態以唯讀檔案給 agent(`dev/sheet`,csv)—
+     `cat` / `grep` / `wc` / `head -n` 直接查,不必為每種資料各開一個 tool。
+     `createRuntime({devices: ['sheet']})` + `rt.setDevice(name, value)`;
+     值必須同步可讀而真值在主執行緒,所以 worker 持**單向唯讀鏡像**,寫入仍走 tool
+     (避免「worker 寫了但主執行緒還不知道」的雙向分岔)。`read_sheet` tool 因此退場
    - **應用層把自己講給 agent 聽**:`registerHost({tools, run, brief, context})` —
      `brief`(靜態,這是什麼應用)併進 system prompt;`context`(動態,現在什麼狀況)
      每輪取一次附在對話尾端。少了它,應用自己的文件狀態(composer 的 tree、
@@ -57,6 +62,10 @@
      有 error 就只講 error
    - 使用者在終端機改檔(或任何非 write_file 的變更)不會觸發重繪 — 先前只認
      `write_file` / `edit_file` 的路徑;改由 fs 變更事件驅動後,`sed -i` 也會重畫
+   - `sheet-store` 把內部陣列的參考交給 sheet widget,widget 就地補空白列 —
+     `setRaw(4 列)` 同一次呼叫內變成 29 列,文件狀態被畫面狀態污染
+     (agent 對 `dev/sheet` 下 `wc -l` 會拿到 29 而實際只有 4 筆)。
+     `raw()` / `setRaw()` 一律回/存複本,並在入口 trim 尾端空白列
    - 每輪的應用狀況若把歷史裡舊的整個刪掉,使用者自己切換畫面後 agent 會判定成
      「我上次答錯了」並道歉一個不存在的錯誤(它上次是對的);改成留佔位,
      讓模型分得出「狀況變了」與「我搞錯了」
@@ -74,7 +83,8 @@
    - 沒要圖時模型會拿原始碼推測外觀還宣稱「已確認實際呈現」:tool description / prompt /
      報告內容三處收緊,`image: false` 時直接在報告裡寫明沒看到畫面
  - tweaks:
-   - `@plotdb/esh` 升到 0.4.0(OPFS 靜默資料遺失、覆寫不截斷兩個修復;
+   - `@plotdb/esh` 升到 0.4.1(修 redirect 與 sync 寫入的佇列 race — 我方回報;
+     實測 io→redirect ×30 / redirect 立即讀 ×30 / sed 交錯 ×20 全綠)。原 0.4.0(OPFS 靜默資料遺失、覆寫不截斷兩個修復;
      新增 scoped root `createShell({root})` / `sh.chroot()` 與 device backend,尚未接);
      API 無破壞性變動
    - `@plotdb/agent` 更名 `@plotdb/wagent`(`packages/agent` -> `packages/wagent`);

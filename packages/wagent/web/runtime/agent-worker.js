@@ -66,10 +66,36 @@ const SEED = {
 
 const esh = await import(eshUrl);
 
+// ── device 檔案 ───────────────────────────────────────────────────────
+// 應用層的文件狀態 (試算表之類) 以檔案形式呈現, agent 就能用它已經會的
+// grep / wc / head 去查, 不必為每種資料再開一個 tool。
+//
+// 值必須是**同步**可讀的 (shell 的 readFileSync 依 stat size 配 buffer),
+// 但真值在主執行緒。所以這裡持有一份鏡像, 由主執行緒在變更時推過來。
+//
+// 鏡像是這個專案反覆出事的形狀, 所以刻意限制:
+//  - 單向 (主執行緒是唯一真相, worker 只讀)
+//  - 唯讀 device (沒有 write callback -> 寫入回 EROFS)。寫入走 tool,
+//    避免「worker 寫了但主執行緒還不知道」這種雙向分岔
+// device 名單必須在建 shell 前就知道 (readdir 由它決定), 所以走 URL 參數。
+const deviceNames = (params.get('devices') || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+const deviceValues = {};
+function deviceFiles() {
+  const files = {};
+  deviceNames.forEach(function(n) {
+    deviceValues[n] = '';
+    files[n] = {read: function() { return deviceValues[n]; }};   // 無 write = 唯讀
+  });
+  return files;
+}
+
+const mounts = {'/home': {backend: 'opfs'}};
+if(deviceNames.length) { mounts[`${ROOT}/dev`] = {backend: 'device', files: deviceFiles()}; }
+
 let persist = 'in-memory';
 let sh;
 try {
-  sh = await esh.createShell({mounts: {'/home': {backend: 'opfs'}}});
+  sh = await esh.createShell({mounts: mounts});
   persist = 'opfs';
 } catch(e) {
   sh = await esh.createShell();
@@ -227,6 +253,10 @@ self.addEventListener('message', function(ev) {
   const msg = ev.data || {};
   if(msg.type === 'host-tools') {
     hostTools = msg.tools || [];
+    return;
+  }
+  if(msg.type === 'device-set') {
+    if(deviceNames.indexOf(msg.name) >= 0) { deviceValues[msg.name] = String(msg.value == null ? '' : msg.value); }
     return;
   }
   if(msg.type === 'host-info') {

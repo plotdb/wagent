@@ -33,8 +33,10 @@ const PURPOSE = `目前的任務領域是資料視覺化 — block 的目的是�
 
 有實作就只呼叫它、不重建;沒實作就 fallback 重建, 兩種都能運作。
 
-要看目前的資料:用 read_sheet。要放範例資料進去:用 write_sheet (csv,第一列是表頭)。
-使用者可能已經有自己的資料了,動手覆蓋前先 read_sheet 看一眼。
+要看目前的資料:試算表以唯讀檔案 dev/sheet 呈現 (csv),用 run_shell 直接查:
+cat dev/sheet、head -3 dev/sheet、wc -l dev/sheet、grep ... dev/sheet 都可以。
+要改資料:用 write_sheet (整份 csv,第一列是表頭)。dev/sheet 是唯讀的,寫它會失敗。
+使用者可能已經有自己的資料了,動手覆蓋前先看一眼。
 
 執行環境已載入全域函式庫:
  - window.d3: d3 v7

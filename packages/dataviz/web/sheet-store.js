@@ -29,6 +29,15 @@ const SAMPLE = [
   ['2026-06', 171, 'A']
 ];
 
+// sheet widget 會自己補一堆空白列給使用者往下打 (設 5 列進去, data() 回 29 列)。
+// 那是**畫面狀態**不是文件內容, 所以在進 store 的邊界就濾掉 —
+// 而不是每個出口 (csv / value / 存檔) 各濾一次。單一真相要在入口就成立。
+function trimBlank(rows) {
+  var last = rows.length - 1;
+  while(last > 0 && !(rows[last] || []).some(function(c) { return c !== '' && c != null; })) { last--; }
+  return rows.slice(0, last + 1);
+}
+
 function coerce(v, type) {
   if(type !== 'number') { return v == null ? '' : String(v); }
   if(v === '' || v == null) { return null; }
@@ -55,10 +64,15 @@ export function createStore() {
   return {
     dimensions: DIMENSIONS,
     on: function(fn) { listeners.push(fn); },
-    // 給 sheet UI 的原始 2D 陣列 (含表頭)
-    raw: function() { return rows; },
+    // 給 sheet UI 的原始 2D 陣列 (含表頭)。
+    //
+    // **一定要回複本。** sheet widget 拿到陣列後會直接在上面補空白列,
+    // 回傳內部參考的話它就把我們的文件狀態改掉了 — 實測 setRaw(4 列) 進去、
+    // 同一次呼叫內就變成 29 列 (fire -> listener -> sh.data(raw()) -> widget 就地 push)。
+    // 兩個地方共用同一個陣列 = 兩份狀態, 這禮拜第五次。
+    raw: function() { return rows.map(function(r) { return (r || []).slice(); }); },
     setRaw: function(next) {
-      rows = next;
+      rows = trimBlank(next || []).map(function(r) { return (r || []).slice(); });
       fire();
     },
     // 給 block 的資料: 已經解析好、型別正確的物件陣列。
@@ -79,11 +93,11 @@ export function createStore() {
         });
       return {columns: DIMENSIONS, rows: out};
     },
-    // 與 agent 之間以 csv 交換 —— 之後 esh 的 device backend 到位後,
-    // 這兩個會變成 /dev/sheet 的 read / write, agent 就能直接用 grep / wc 去 query。
+    // 與 agent 之間以 csv 交換。讀走 device 檔案 (dev/sheet, 唯讀) —
+    // agent 用 cat / grep / wc 直接查, 不必為此開 tool;寫仍走 write_sheet tool。
     toCSV: function() { return toCSV(rows); },
     fromCSV: function(text) {
-      var next = parseCSV(String(text || ''));
+      var next = trimBlank(parseCSV(String(text || '')));
       if(!next.length) { throw new Error('csv is empty'); }
       rows = next;
       fire();

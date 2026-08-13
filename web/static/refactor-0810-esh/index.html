@@ -11,7 +11,9 @@ body { margin: 0; font-family: -apple-system, "Helvetica Neue", "PingFang TC", s
 .term-bar { font: 11px Menlo, monospace; color: #aaa; padding: 4px 10px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; }
 .term-bar b { color: #ddd; font-weight: 600; }
 #term-root { flex: 1; min-height: 0; }</style></head><body><div id="chat-root"></div><div class="main"><div id="sandbox-root"></div><div class="sheet-pane"><div class="sheet-bar"><span><b>sheet</b> — 資料由應用層持有, 改這裡圖會跟著重畫</span><span id="sheet-info"></span></div><div id="sheet-root"></div></div><div class="term-pane"><div class="term-bar"><span><b>workspace shell</b> — agent 與你共用同一份 working tree</span><span id="persist-info"></span></div><div id="term-root"></div></div></div><script type="module">import {createRuntime} from '/assets/lib/@plotdb/wagent/main/runtime/client.js';
-import {createStore} from '/assets/lib/dataviz/main/sheet-store.js';
+// 開發期避免模組快取 (與上面 block registry 的 ?t= 同一個理由) —
+// 沒有它時改了 app 程式碼卻沒生效, 會被誤判成邏輯有問題
+const {createStore} = await import('/assets/lib/dataviz/main/sheet-store.js?t=' + Date.now());
 
 // ── 應用層的文件狀態 ──────────────────────────────────────────────
 // 資料由應用層持有 (Tier 1)。block 拿到的是「值」, 不是檔案路徑 —
@@ -47,7 +49,9 @@ function create(name, root, data) {
     .then(function(inst) { return inst.interface(); });
 }
 
-createRuntime({api: API})
+// devices: 把應用層的文件狀態以檔案形式給 agent — 它就能用 grep / wc / head 去查,
+// 不必為每種資料各開一個 tool (host.md 的取捨準則: 能用指令表達的就別當 tool)
+createRuntime({api: API, devices: ['sheet']})
   .then(function(rt) {
     window.rt = rt;  // 方便在 console 觀察 (rt.sh.run / rt.io)
     document.getElementById('persist-info').textContent = rt.sh.ready ? '' : '';
@@ -96,7 +100,11 @@ createRuntime({api: API})
         // store 是唯一真相, sheet UI 只是它的一個視圖 — 所以同步要放在這裡,
         // 而不是放在某個特定的寫入路徑上。之前只在 write_sheet 裡同步,
         // 結果從別的來源改 store 時 UI 就跟真值分岔了 (畫面顯示舊資料, 圖卻是新的)。
+        // device 是唯讀鏡像, 應用層是唯一真相 — 每次變更都推過去
+        function pushDevice() { rt.setDevice('sheet', store.toCSV()); }
+        pushDevice();
         store.on(function() {
+          pushDevice();
           showInfo();
           if(!fromSheet) { sh.data(store.raw()); }
           // 資料變了 -> 有實作 client.data 的 block 增量更新, 其餘重掛
@@ -129,11 +137,6 @@ createRuntime({api: API})
           // 應用層自己的 tool。wagent 不需要知道「block」是什麼 —
           // composer 在這裡註冊的會是「開啟某個 node」之類的東西。
           tools: [{
-            name: 'read_sheet',
-            description: 'Read the spreadsheet the user is editing, as CSV (first row is the header). ' +
-              'This is where the chart data comes from. Read it before overwriting — the user may already have their own data.',
-            parameters: {type: 'object', properties: {}, additionalProperties: false}
-          }, {
             name: 'write_sheet',
             description: 'Replace the whole spreadsheet with the given CSV (first row must be the header). ' +
               'Use this to put sample data in. The chart redraws automatically.',
@@ -156,9 +159,6 @@ createRuntime({api: API})
             }
           }],
           run: function(name, args) {
-            if(name === 'read_sheet') {
-              return Promise.resolve(store.toCSV());
-            }
             if(name === 'write_sheet') {
               var n = store.fromCSV(args && args.csv);
               return Promise.resolve('sheet now has ' + n + ' data rows');
@@ -184,7 +184,8 @@ createRuntime({api: API})
           brief: [
             '這個環境是一個 block 編輯器: 左邊是對話, 右邊即時渲染「目前開啟的 block」,',
             '中間是一張試算表 — 圖表的資料來源, 用戶可以直接編輯, 改了圖就會重畫。',
-            '資料不在檔案系統裡: 你用 read_sheet / write_sheet 存取它, block 則由執行環境注入 opt.data。',
+            '試算表以唯讀檔案 dev/sheet 呈現 (csv): 用 cat / grep / wc / head 直接查, 不必另外開 tool。',
+            '要改資料用 write_sheet。block 那端則由執行環境注入 opt.data, 不必自己讀。',
             '最下面是一個與你共用同一份 workspace 的終端機 (用戶可能會自己動檔案)。',
             '你改到「目前開啟的 block」或 data/ 底下的檔案時, 預覽會自己重畫, 不必做什麼;',
             '但建立新 block 之後要呼叫 open_block, 否則用戶看到的還是上一個。',
