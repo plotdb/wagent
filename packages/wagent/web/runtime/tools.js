@@ -72,7 +72,7 @@ export const snapshotTool = {
       },
       width: {type: 'number', description: 'fresh mode only: render width in px (default 375)'},
       height: {type: 'number', description: 'fresh mode only: render height in px (default 600)'},
-      time: {type: 'number', description: 'for animated blocks that implement seek(): freeze and jump to this time before looking'},
+      time: {type: 'number', description: 'for animated blocks that implement seek(): freeze and jump to this time before looking. the report tells you under client.seek whether it actually took effect'},
       target: {type: 'string', description: 'block name to inspect; defaults to the one currently shown'}
     },
     additionalProperties: false

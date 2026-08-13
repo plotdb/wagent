@@ -123,7 +123,11 @@ snapshot 的輸出也不落地到 workspace — 成果目錄只放成果。需�
  - `capture` 存在就優先用它 —— WebGL 自己 `readPixels` 遠比外部重繪準確,
    也繞開 `preserveDrawingBuffer` 的坑
  - `pause` / `seek` 是動畫與遊戲可被檢查的前提:不凍結時間,前後對照的 diff 全是噪音
- - `state` 通常比看圖更好用也更便宜(「玩家在哪、幾個敵人、選中什麼」),優先用它
+ - `state` 通常比看圖更好用也更便宜(「玩家在哪、幾個敵人、選中什麼」),優先用它。
+   但它的大小完全由 block 決定 — host 會在 2000 字元處截斷並要求 block 改回摘要,
+   否則「便宜的報告」這個前提會被一個粒子模擬直接打破
+ - report 會回報 `client.implements`(這個 block 實作了哪些)與 `client.seek`(seek 是否真的生效)。
+   **要求了 `time` 但 block 沒實作 `seek` 時必須講明**,否則 agent 拿到的是一張隨機影格,卻以為自己看的是 t=N
  - block 端必須有 **host 不存在時的 fallback** — block 會被發佈到別處(makechart、composer、任意網頁)執行,不能假設 host 存在;
    host 端也一樣,client 沒實作就走泛用路徑
 
@@ -149,4 +153,5 @@ host ↔ block 之間**不需要**這個約束 — 若整個 host(含 block tree
  - **多 entry / nested block**:`/index.html` 之外可能有 `/mobile/index.html`、`/editing.html`;巢狀 block 的組合方式未定義。snapshot 的 `target` 為此預留。
  - **`/dev`、`/tmp`**:把 renderer 當裝置、把暫存輸出與成果分離。概念清楚但需要先定義「裝置是什麼、有幾個、怎麼定址」,現在做等於先賭。
  - **composer 整合**:composer 的 node tree 是「這個頁面要長這樣」的**文件狀態**,不該映射成 fs;fs 在那個情境下管的是這些 node 用到的**程式碼**(近似 node_modules)。tree 操作會是 host 的領域指令(可掛成 shell 自訂指令,依 id 操作,不需要是檔案)。
+ - **高保真截圖(`getDisplayMedia`)**:snapdom 走的是 foreignObject 重繪 — 它畫的是「瀏覽器依 DOM 重新畫一次」的結果,不是使用者真正看到的那張。跨 origin 資源、CSS filter/blend、部分字體、以及任何非 DOM 的合成(video、WebGL 疊層)都可能失真。`getDisplayMedia` 抓的是**真實合成後的畫面**,能繞開全部這些。代價:需要使用者授權且只能由使用者手勢觸發(agent 無法自行開啟),抓的是整個分頁/視窗要再裁切,而且背景分頁一樣不更新。方向是當成**選用的高保真模式** — 使用者按一次「允許 agent 看畫面」,host 留住 stream,之後 snapshot 走 `ImageCapture` / `drawImage` 取幀,失敗再退回 snapdom。這也順帶解決 WebGL `preserveDrawingBuffer` 與 `capture` 沒實作的情況。
  - **fs 變更事件**:block 或使用者寫檔後,host 需要知道以便重繪、agent 需要知道以免撞樂觀鎖。esh 目前無 watch。

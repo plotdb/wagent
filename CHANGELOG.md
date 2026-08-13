@@ -17,7 +17,15 @@
    - block 視覺協定(走 `@plotdb/block` 的 host / client,bid `@plotdb/wagent`):
      block 可選擇實作 `capture` / `pause` / `seek` / `state`,讓動畫、遊戲、WebGL 也能被檢查;
      沒實作就 fallback 泛用路徑。prompt 教 agent 寫出可被檢查的 block
+   - snapshot 報告加 `client.implements` / `client.seek`:講明 block 實作了哪些能力、
+     要求的 `time` 有沒有真的生效
  - bugfixes:
+   - 要求 `time` 但 block 沒實作 `seek` 時默默回一張隨機影格,agent 會當成 t=N 的畫面;
+     改成報告寫明 seek 未生效
+   - `blockState` 大小由 block 決定,粒子模擬之類可吐出數十 KB 破壞「報告很便宜」的前提;
+     2000 字元截斷並要求 block 改回摘要
+   - 純色填滿的 canvas 被判成 blank(單一色階即視為空白);改成只有透明或接近全白才算空白,
+     純色另報 `uniform` — 「畫了東西但沒有細節」與「什麼都沒畫」是兩回事
    - snapshot 在背景分頁永遠不 resolve(rAF 不觸發),改與 timeout 競賽
    - snapshot 抓到過期畫面(agent 在 tool loop 中途問,但畫面要整輪結束才重繪),改成預設先重繪
    - 失敗的 tool 在對話紀錄顯示成 ✓:tool 事件改分 `phase: 'start' | 'end'` 兩段

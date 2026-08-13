@@ -88,6 +88,32 @@
             .catch(function(e) { return {error: String((e && e.message) || e)}; });
         }
 
+        var CLIENT_CAPS = ['pause', 'seek', 'state', 'capture'];
+        function capsOf(c) {
+          if(!c) { return []; }
+          return CLIENT_CAPS.filter(function(k) { return typeof c[k] === 'function'; });
+        }
+
+        // 把「要求了什麼、實際生效了什麼」寫進報告。少了這段, block 沒實作 seek 時
+        // 拿到的只是一張隨機的動畫影格, 而 agent 會以為自己看到的是 t=3。
+        function clientReport(report, c, o) {
+          var caps = capsOf(c);
+          report.client = {implements: caps};
+          if(o.time == null) { return; }
+          report.client.seek = caps.indexOf('seek') >= 0 ? o.time : false;
+          var hint = null;
+          if(caps.indexOf('seek') < 0) {
+            hint = 'you asked for time: ' + o.time + ' but this block does not implement seek — ' +
+              'the frame you got is whatever was on screen, NOT time ' + o.time + '. ' +
+              'add pause / seek to the block client if you need reproducible frames.';
+          } else if(caps.indexOf('pause') < 0) {
+            hint = 'this block implements seek but not pause — it may keep animating after the seek, ' +
+              'so repeated snapshots at the same time can still differ.';
+          }
+          // inspect 可能已經放了 blank 之類的 hint, 別蓋掉
+          if(hint) { report.hint = report.hint ? report.hint + ' ' + hint : hint; }
+        }
+
         // ── 取樣與出圖 ────────────────────────────────────────────────────
         // canvas 取樣: 縮到 N x N 讀像素, 得到 (a) 有沒有東西 (b) 一個可比較的簽名。
         // 對 WebGL canvas, 若未開 preserveDrawingBuffer 會讀到全透明 — 這是常見坑, 另外提示。
@@ -109,7 +135,13 @@
               seen[v] = 1;
               cells.push(v);
             }
-            return {ratio: lit / (N * N), levels: Object.keys(seen).length, cells: cells.join(',')};
+            var keys = Object.keys(seen);
+            return {
+              ratio: lit / (N * N), levels: keys.length, cells: cells.join(','),
+              // 只有一種顏色時, 這色是什麼很重要: 全透明 / 全白 是「沒畫東西」,
+              // 純色填滿則是畫了東西, 兩者不能都算 blank
+              flat: keys.length === 1 ? +keys[0] : null
+            };
           } catch(e) {
             return null;   // 跨來源圖片汙染等
           }
@@ -219,7 +251,13 @@
               r.canvas.inkRatio = +s.ratio.toFixed(3);
               r.canvas.levels = s.levels;
               sig = s.cells;
-              blank = s.ratio < 0.01 || s.levels <= 1;
+              // 單一色階: 只有透明或接近全白才算空白 (v 是 0..7 的亮度桶, -1 為透明)
+              var empty = s.flat === -1 || s.flat >= 7;
+              blank = s.ratio < 0.01 || (s.levels <= 1 && empty);
+              if(s.levels <= 1 && !blank) {
+                r.canvas.uniform = true;
+                r.canvas.note = 'canvas is filled with a single flat colour — something was drawn, but there is no detail. if you expected shapes or text, they are missing.';
+              }
               if(s.ratio < 0.01) {
                 r.canvas.note = 'canvas reads as empty. if this is WebGL, create the context with {preserveDrawingBuffer: true} — otherwise the drawing buffer is cleared before it can be read.';
               }
@@ -349,7 +387,7 @@
               var report = inspect(holder, 'fresh:' + w + 'x' + h + ':' + name, name, env);
               report.mode = 'fresh';
               report.renderedAt = {width: w, height: h};
-              return withState(report, clientOf(inst));
+              return withState(report, clientOf(inst), o);
             })
             .then(function(report) {
               if(!o.image) {
@@ -379,10 +417,25 @@
             });
         }
 
-        function withState(report, c) {
+        // report 的賣點是「便宜」, 但 state 的大小完全由 block 決定 —
+        // 一個粒子模擬或大棋盤可以吐出好幾十 KB。超過就截掉並要求 block 自己摘要。
+        var STATE_LIMIT = 2000;
+        function withState(report, c, o) {
+          clientReport(report, c, o);
           if(!c || typeof c.state !== 'function') { return Promise.resolve(report); }
           return callClient(c, 'state').then(function(s) {
-            if(s != null) { report.blockState = s; }
+            if(s == null) { return report; }
+            var str;
+            try { str = JSON.stringify(s); } catch(e) { str = null; }
+            if(str == null) {
+              report.blockStateError = 'state() returned something that is not JSON-serializable';
+            } else if(str.length > STATE_LIMIT) {
+              report.blockState = str.slice(0, STATE_LIMIT) + '…[truncated]';
+              report.blockStateNote = 'state() returned ' + str.length + ' chars and was truncated at ' +
+                STATE_LIMIT + '. have state() return a summary (counts, current level, selection), not the raw simulation.';
+            } else {
+              report.blockState = s;
+            }
             return report;
           });
         }
@@ -441,7 +494,7 @@
               .then(function(env) {
                 var report = inspect(self.el, 'live:' + self.current, self.current, env);
                 report.mode = 'live';
-                return withState(report, clientOf(self.inst));
+                return withState(report, clientOf(self.inst), o);
               })
               .then(function(report) {
                 if(!o.image) {

@@ -49,6 +49,7 @@ createRuntime({api: API})
   .then(function(rt) {
     return create('sandbox', document.getElementById('sandbox-root'), {api: API, io: rt.io})
       .then(function(sb) {
+        window.sb = sb;  // 方便在 console 觀察 (sb.snapshot)
         // sandbox 即 host 的觀察通道: 把 snapshot 交給 agent
         rt.registerHost({
           run: function(name, args) {

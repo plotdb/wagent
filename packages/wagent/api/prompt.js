@@ -41,7 +41,8 @@ Block 格式: 一個標準 HTML 片段,最外層一個 <div>,內含畫面 HTML�
       return {
         pause: function() {},        // 停掉 rAF 迴圈, 讓畫面可重現
         seek: function(t) {},        // 跳到指定時間/影格
-        state: function() {},        // 回結構化狀態 (分數、關卡、選取項目…), 比看圖便宜也可靠
+        state: function() {},        // 回結構化「摘要」(分數、關卡、幾個敵人、選取項目…), 比看圖便宜也可靠
+                                     // 不要回整份模擬資料 — 超過 2000 字元會被截掉
         capture: function() {}       // 選用: 自己截圖, 回 canvas / blob / dataURL
       };
     }
