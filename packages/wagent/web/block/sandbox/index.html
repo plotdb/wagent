@@ -22,7 +22,9 @@
         name: 'sandbox',
         version: 'main',
         description: 'sandbox 預設視覺: block 選單 + 預覽區',
-        extend: {name: 'sandbox-base', dom: 'overwrite'}
+        // bid (name + path) 而不是通用名字 'sandbox-base' —— 後者要求 host 的 registry
+        // 認得那個名字, 等於在模組之間留下隱涵假設。path 相對於本模組的資產目錄。
+        extend: {name: '@plotdb/wagent', path: 'block/sandbox/base.html', dom: 'overwrite'}
       },
       init: function(opt) {
         var root = opt.root;

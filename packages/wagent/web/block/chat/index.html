@@ -30,7 +30,8 @@
         name: 'chat',
         version: 'main',
         description: 'chat 預設視覺: 訊息列表 + 輸入框 + tool 執行紀錄',
-        extend: {name: 'chat-base', dom: 'overwrite'}
+        // bid (name + path), 理由同 sandbox/index.html
+        extend: {name: '@plotdb/wagent', path: 'block/chat/base.html', dom: 'overwrite'}
       },
       init: function(opt) {
         var root = opt.root;

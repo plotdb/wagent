@@ -387,8 +387,11 @@
         // 載入並執行 workspace 的 block。每次建新 manager 避免 cache 到舊版原始碼。
         function mount(name, el) {
           var mgr = new window.block.manager({
+            // 一條規則就夠: bid = (name, version, path)。省略 path 時依 type 取預設檔名。
             registry: function(o) {
-              return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || 'index.min.js');
+              var def = o.type === 'js' ? 'index.min.js'
+                : o.type === 'css' ? 'index.min.css' : 'index.html';
+              return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || def);
             }
           });
           return Promise.all([

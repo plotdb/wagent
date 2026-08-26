@@ -15,9 +15,12 @@ app.use(express.json({limit: '10mb'}));
 
 // wagent 的後端只做三件事: 轉發 LLM 請求、給 system prompt、報告 provider。
 // workspace 與 agent loop 都在瀏覽器裡, 所以這裡沒有任何檔案系統設定。
-// purpose = 領域 prompt, 由應用層提供 (見 web/src/pug/index.pug 的說明)。
+//
+// 沒有給 purpose —— 這個 sample 不指定領域, 就是一個純粹的 block 編輯環境。
+// 有領域的應用 (資料視覺化、遊戲、表單...) 在這裡代入自己的 prompt;
+// 至於「這個頁面長怎樣、檔案放哪」那種每輪都可能變的事, 走瀏覽器端的
+// registerHost({brief, context}) — 見 web/src/pug/index.ls。
 app.use('/api/agent', require('@plotdb/wagent')({
-  purpose: require('./web/purpose'),
   log: require('./lib/log')
 }));
 

@@ -10,8 +10,8 @@ html
     script(src="/assets/lib/@plotdb/csscope/main/index.min.js")
     script(src="/assets/lib/@plotdb/rescope/main/index.min.js")
     script(src="/assets/lib/@plotdb/block/main/index.min.js")
-    //- 應用層自己決定要給 block 什麼函式庫。wagent 不內建任何一個。
-    script(src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js")
+    //- 這裡刻意不預載任何繪圖函式庫 —— wagent 不內建, 而這個 sample 也不指定領域。
+    //- 需要的話應用層自己在這裡加 (例如 chart.js / d3), 或讓 block 自己 <script src>。
     style(type="text/css"): include:stylus index.styl
   body
     #chat-root
