@@ -2,28 +2,25 @@ doctype html
 html
   head
     meta(charset="utf-8")
-    meta(name="viewport" content="width=device-width, initial-scale=1")
-    title wagent — 單一 block sample
-    //- block 的執行環境 (@plotdb/block 與它的相依)
-    script(src="/assets/lib/proxise/main/index.min.js")
-    script(src="/assets/lib/@plotdb/semver/main/index.min.js")
-    script(src="/assets/lib/@plotdb/csscope/main/index.min.js")
-    script(src="/assets/lib/@plotdb/rescope/main/index.min.js")
-    script(src="/assets/lib/@plotdb/block/main/index.min.js")
-    //- 這裡刻意不預載任何繪圖函式庫 —— wagent 不內建, 而這個 sample 也不指定領域。
-    //- 需要的話應用層自己在這裡加 (例如 chart.js / d3), 或讓 block 自己 <script src>。
-    style(type="text/css"): include:stylus index.styl
+    title wagent samples
+    style(type="text/css").
+      body { margin: 0; font: 15px/1.7 -apple-system, "Helvetica Neue", "PingFang TC", sans-serif;
+             background: #f5f5f2; color: #333; }
+      .wrap { max-width: 560px; margin: 80px auto; padding: 0 24px; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      .sub { color: #888; font-size: 13px; margin-bottom: 32px; }
+      a.card { display: block; padding: 16px 18px; margin-bottom: 12px; background: #fff;
+               border: 1px solid #e2e2de; border-radius: 8px; text-decoration: none; color: inherit; }
+      a.card:hover { border-color: #b9c6d8; }
+      a.card b { display: block; font-size: 15px; margin-bottom: 2px; }
+      a.card span { color: #888; font-size: 13px; }
   body
-    #chat-root
-    .main
-      .bar
-        b index.html
-        |  — agent 編輯的唯一檔案;改了這裡右邊就重畫
-      #sandbox-root
-
-    //- runtime 是 ES module。LiveScript 的 `import` 是 `<<<` 運算子, 借不到
-    //- 動態 import 的語法, 所以在這裡先取好, 以 promise 交棒。
-    //- 兩個都是 module, 依文件順序執行, 所以下面拿得到。
-    script(type="module").
-      window.wagentRuntime = import('/assets/lib/@plotdb/wagent/main/runtime/client.js');
-    script(type="module"): include:lsc index.ls
+    .wrap
+      h1 wagent samples
+      .sub 兩個 sample 的差別只有拓樸 —— wagent 對兩種都一無所知。
+      a.card(href="/single-block/")
+        b single-block
+        span 一個 block(/index.html)。最小的用法:對話、渲染、觀察通道。
+      a.card(href="/multiple-blocks/")
+        b multiple-blocks
+        span blocks/&lt;name&gt;/index.html。加上唯讀檔案樹,點檔案切換預覽對象。

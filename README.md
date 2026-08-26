@@ -5,7 +5,8 @@ and — this is the part that matters — can see what it renders.
 
     packages/wagent            the host: api (llm proxy + prompt) + web (runtime, chat, sandbox)
     packages/wagent-headless   renderer for when no user's browser is present
-    web/src/pug                a minimal sample application
+    web/src/pug/single-block     sample: one block at /index.html
+    web/src/pug/multiple-blocks  sample: blocks/<name>/, with a read-only file tree
     context/project/host.md    the design record — read this first
 
 ## Run the sample
@@ -14,8 +15,12 @@ and — this is the part that matters — can see what it renders.
     echo "ANTHROPIC_API_KEY=sk-..." > .env    # or OPENAI_API_KEY
     npm start                                 # http://localhost:3000
 
-The sample edits a single block (`/index.html` in a browser-local workspace).
-Talk to it and watch the preview redraw.
+Two samples, differing **only in topology** — wagent knows neither:
+
+ - `/single-block/` — one block at `/index.html`. The smallest useful setup.
+ - `/multiple-blocks/` — `blocks/<name>/index.html`, plus a read-only file tree on the
+   left. Click a file to switch what the preview shows; ask the agent for a new block
+   and it appears in the tree.
 
 ## The shape of it
 
@@ -28,6 +33,7 @@ The backend does three things: forward LLM requests with the key attached, serve
 system prompt, report which provider is configured. The agent loop, the workspace and
 every tool run in the browser.
 
-`web/src/pug/index.ls` is the whole application layer of the sample — about 140 lines,
-commented as a walkthrough. Start there. (`index.pug` is markup only; `index.styl` is
-styling; both are pulled in with `include`.)
+`web/src/pug/single-block/index.ls` is the whole application layer of that sample —
+about 130 lines, commented as a walkthrough. Start there, then read
+`multiple-blocks/index.ls` for the file tree and the `open_block` host tool.
+(`index.pug` is markup only, `index.styl` is styling; both are pulled in with `include`.)

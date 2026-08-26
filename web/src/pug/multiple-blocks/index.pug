@@ -1,0 +1,32 @@
+doctype html
+html
+  head
+    meta(charset="utf-8")
+    meta(name="viewport" content="width=device-width, initial-scale=1")
+    title wagent — 多 block sample
+    //- block 的執行環境 (@plotdb/block 與它的相依)
+    script(src="/assets/lib/proxise/main/index.min.js")
+    script(src="/assets/lib/@plotdb/semver/main/index.min.js")
+    script(src="/assets/lib/@plotdb/csscope/main/index.min.js")
+    script(src="/assets/lib/@plotdb/rescope/main/index.min.js")
+    script(src="/assets/lib/@plotdb/block/main/index.min.js")
+    //- 這裡刻意不預載任何函式庫 —— wagent 不內建, 這個 sample 也不指定領域。
+    style(type="text/css"): include:stylus index.styl
+  body
+    .files
+      .bar
+        b blocks/
+        |  — 點檔案切換預覽對象
+      #file-tree
+    #chat-root
+    .main
+      .bar
+        span#current —
+      #sandbox-root
+
+    //- runtime 是 ES module。LiveScript 的 `import` 是 `<<<` 運算子, 借不到
+    //- 動態 import 的語法, 所以在這裡先取好, 以 promise 交棒。
+    //- 兩個都是 module, 依文件順序執行, 所以下面拿得到。
+    script(type="module").
+      window.wagentRuntime = import('/assets/lib/@plotdb/wagent/main/runtime/client.js');
+    script(type="module"): include:lsc index.ls
