@@ -384,14 +384,44 @@
             .then(function(d) { return (d && typeof d === 'object') ? d : {}; });
         }
 
+        // workspace 裡的 block 用 ns 'local' 定址。block 之間要互相引用時:
+        //
+        //     init: function(opt) {
+        //       return opt.manager.from({ns: 'local', name: 'clock'}, opt.root);
+        //     }
+        //
+        // 沒有 ns 的照舊解析成已發佈的資產 (/assets/lib/...)。分開的理由是 local 的
+        // block 隨時會被改、也不在任何 URL 上, 跟發佈出去的東西不是同一種東西。
+        var LOCAL_NS = 'local';
+
+        function libUrl(o) {
+          var def = o.type === 'js' ? 'index.min.js'
+            : o.type === 'css' ? 'index.min.css' : 'index.html';
+          return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || def);
+        }
+
         // 載入並執行 workspace 的 block。每次建新 manager 避免 cache 到舊版原始碼。
         function mount(name, el) {
           var mgr = new window.block.manager({
-            // 一條規則就夠: bid = (name, version, path)。省略 path 時依 type 取預設檔名。
-            registry: function(o) {
-              var def = o.type === 'js' ? 'index.min.js'
-                : o.type === 'css' ? 'index.min.css' : 'index.html';
-              return '/assets/lib/' + o.name + '/' + (o.version || 'main') + '/' + (o.path || def);
+            registry: {
+              lib: libUrl,
+              block: {
+                url: libUrl,
+                // workspace 的 block 不在任何 URL 上 (fs 在 OPFS 裡), 所以走 fetch
+                // callback 直接把原始碼交出去 —— 由應用層的 source 解析名字。
+                fetch: function(o) {
+                  if(o.ns === LOCAL_NS) {
+                    if(typeof self.source !== 'function') {
+                      return Promise.reject(new Error('no source provider for workspace block: ' + o.name));
+                    }
+                    return Promise.resolve(self.source(o.name));
+                  }
+                  return window.fetch(o.url).then(function(r) {
+                    if(!r.ok) { throw new Error('load failed: ' + o.url); }
+                    return r.text();
+                  });
+                }
+              }
             }
           });
           return Promise.all([

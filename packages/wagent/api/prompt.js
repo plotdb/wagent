@@ -33,6 +33,17 @@ Block 格式: 一個標準 HTML 片段,最外層一個 <div>,內含畫面 HTML�
   </script>
 </div>
 
+組合:block 可以把 workspace 裡**其他 block** 掛進自己的畫面。用 ns `local` 定址,
+名字就是它在這個環境裡的名字(目錄約定見下方應用層說明):
+
+    init: function(opt) {
+      return opt.manager.from({ns: 'local', name: 'clock'}, {root: opt.root.querySelector('.slot')});
+    }
+
+第二個參數是**選項物件**不是 DOM 元素(`{root: el}`),給錯的話會靜靜地什麼都不掛。
+回傳 `{instance, interface}`,需要之後操作子 block 就留著它。
+沒有 ns 的 bid 解析成已發佈的資產,不是 workspace 裡的東西。
+
 會動的 block(動畫、遊戲、模擬)請多實作 client,讓執行環境檢查得到畫面:
 
     pkg: {host: {name: '@plotdb/wagent'}, ...},

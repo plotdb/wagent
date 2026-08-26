@@ -275,6 +275,20 @@ prompt 那側也一樣:`BASE` 只講 block 的**檔案格式**,不講它放哪;
 > 註:server 模式的 `wsenv.listBlocks()` 與 `/blocks` route 仍留著同樣的假設。
 > 那條路徑目前只有舊的 refactor-0809 demo 在用,拆掉會動到它,尚未處理。
 
+### 組合:block 引入 block
+
+block 可以把同一個 workspace 裡的其他 block 掛進自己的畫面,用 ns `local` 定址:
+
+    opt.manager.from({ns: 'local', name: 'clock'}, {root: el})
+
+sandbox 給 block 的 manager 有兩條解析規則:**沒有 ns 的走 `/assets/lib/...`(已發佈的
+資產),ns 為 `local` 的走 `registry.fetch` callback,由應用層的 `source(name)` 交出原始碼**。
+分開的理由是 workspace 裡的 block 不在任何 URL 上(fs 在 OPFS 裡)、而且隨時會被改,
+跟發佈出去的東西不是同一種東西。
+
+`manager.from(bid, opt)` 的第二個參數是**選項物件**(`{root: el}`),不是 DOM 元素 ——
+傳元素進去會靜靜地什麼都不掛(`attach` 讀的是 `opt.root`)。
+
 ### 資料:wagent 不碰
 
 `opt.data` 的**內容由應用層決定,wagent 對它一無所知**。sandbox 只是把應用層給的物件原封不動交給 block。
