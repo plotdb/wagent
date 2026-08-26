@@ -3,3 +3,4 @@ logs
 .env
 web/.view
 web/static/assets/lib
+web/static/index.html

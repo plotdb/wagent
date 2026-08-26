@@ -21,5 +21,9 @@ html
         |  — agent 編輯的唯一檔案;改了這裡右邊就重畫
       #sandbox-root
 
-    script(type="module")
-      include index.js
+    //- runtime 是 ES module。LiveScript 的 `import` 是 `<<<` 運算子, 借不到
+    //- 動態 import 的語法, 所以在這裡先取好, 以 promise 交棒。
+    //- 兩個都是 module, 依文件順序執行, 所以下面拿得到。
+    script(type="module").
+      window.wagentRuntime = import('/assets/lib/@plotdb/wagent/main/runtime/client.js');
+    script(type="module"): include:lsc index.ls

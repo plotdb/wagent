@@ -28,5 +28,6 @@ The backend does three things: forward LLM requests with the key attached, serve
 system prompt, report which provider is configured. The agent loop, the workspace and
 every tool run in the browser.
 
-`web/src/pug/index.js` is the whole application layer of the sample — about 140 lines,
-commented as a walkthrough. Start there.
+`web/src/pug/index.ls` is the whole application layer of the sample — about 140 lines,
+commented as a walkthrough. Start there. (`index.pug` is markup only; `index.styl` is
+styling; both are pulled in with `include`.)
