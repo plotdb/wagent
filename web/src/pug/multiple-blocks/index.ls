@@ -131,10 +131,15 @@ window.wagentRuntime
             do (p = row.path) -> el.addEventListener 'click', -> pick p
           tree-el.appendChild el
 
+      # ls -R 是非同步的, 而 promise 不保證按送出順序 resolve —— agent 連續寫檔時
+      # 兩次列目錄會同時在飛, 舊的那次後到就會把畫面蓋成舊的。用序號丟掉過期結果:
+      # 失敗形式是「樹顯示的跟真相不一致, 而且看起來完全正常」, 這種最難發現。
+      tree-seq = 0
       render-tree = ->
+        seq = ++tree-seq
         rt.sh.run "ls -R /home/workspace/#{block-dir}"
-          .then (r) -> render-rows parse-tree (r.stdout or '')
-          .catch -> render-rows []
+          .then (r) -> render-rows parse-tree (r.stdout or '') if seq is tree-seq
+          .catch -> render-rows [] if seq is tree-seq
 
       # **什麼時候重畫是應用決定的。** 來源不只 agent — 使用者的終端機、
       # 之後的編輯器都算, 所以聽的是 fs 變更事件而不是「agent 說它寫檔了」。
