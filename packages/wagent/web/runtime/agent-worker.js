@@ -76,7 +76,16 @@ function mutates(cmdline) {
     return t && !READONLY.test(t);
   });
 }
-function watchFs(target, prefix) {
+// rooted shell 的路徑相對於它自己的 root, 要補回絕對路徑應用層才比對得到。
+// root 為 "/" 時 p 已經是絕對路徑, prefix 必須是空字串 — 給 "/" 會拼出 "//blocks/..."。
+function normPrefix(root) {
+  const s = String(root || '');
+  return (!s || s === '/') ? '' : s.replace(/\/+$/, '');
+}
+// prefix 傳 function: root 會被 chroot 換掉 (setAgentRoot), 存快照的話
+// 換過之後回報的路徑就是拿舊 root 拼的, 應用層比對必定落空 -> 畫面不重畫,
+// 而 agent 那邊看到的是「檔案改了但畫面沒動」— 這專案最會說謊的那種狀況。
+function watchFs(target, getPrefix) {
   const run = target.run.bind(target);
   const write = target.io.writeFile.bind(target.io);
   target.run = function(cmdline) {
@@ -89,7 +98,7 @@ function watchFs(target, prefix) {
   };
   target.io.writeFile = function(p, c) {
     return write(p, c).then(function(r) {
-      // rooted shell 的路徑是相對 root 的, 補回絕對路徑, 應用層才比對得到
+      const prefix = getPrefix ? getPrefix() : '';
       post({type: 'fs-change', paths: [prefix && p.charAt(0) === '/' ? prefix + p : p]});
       return r;
     });
@@ -107,10 +116,10 @@ function watchFs(target, prefix) {
 // 預設 root 是 workspace。要縮到單一 block 目錄的話由應用層指定 —
 // 但注意那會讓 agent 無法建立新 block, 也看不到掛在 workspace 層的 device,
 // 所以那是「應用決定編輯對象」的嵌入情境才適用 (composer / makechart)。
-const agentRoot = params.get('root') || ROOT;
+let agentRoot = params.get('root') || ROOT;
 const shAgent = await esh.createShell({root: agentRoot});   // 不帶 mounts = 沿用已掛好的 fs
-watchFs(sh, null);                    // 終端機與主執行緒
-watchFs(shAgent, agentRoot);          // agent
+watchFs(sh, null);                                        // 終端機與主執行緒
+watchFs(shAgent, function() { return normPrefix(agentRoot); });   // agent (root 可能被 chroot 換掉)
 
 esh.serveShell(sh, self, {persist: persist, root: ROOT});
 
@@ -225,7 +234,9 @@ self.addEventListener('message', function(ev) {
   }
   if(msg.type === 'agent-root') {
     // 應用層改變 agent 的可見範圍 (host 端 API, shell 內呼叫不到)
-    try { shAgent.chroot(msg.root); } catch(e) { post({type: 'agent-root-error', error: String(e.message || e)}); }
+    // 成功才更新 agentRoot — 失敗時 shell 的 root 沒變, prefix 也不該變
+    try { shAgent.chroot(msg.root); agentRoot = msg.root; }
+    catch(e) { post({type: 'agent-root-error', error: String(e.message || e)}); }
     return;
   }
   if(msg.type === 'device-set') {

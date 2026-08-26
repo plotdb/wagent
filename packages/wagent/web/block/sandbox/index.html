@@ -33,6 +33,8 @@
 
         function reloadList() {
           return base.list().then(function(list) {
+            // 應用層沒提供清單 (例如只編輯單一 block) 就不顯示切換選單
+            select.style.display = list.length ? '' : 'none';
             var cur = base.current();
             select.innerHTML = '<option value="">— 選擇 block —</option>' +
               list.map(function(b) {

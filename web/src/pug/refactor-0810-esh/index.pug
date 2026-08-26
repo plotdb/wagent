@@ -54,6 +54,7 @@ html
       // 沒有它時改了 app 程式碼卻沒生效, 會被誤判成邏輯有問題
       const {createStore} = await import('/assets/lib/dataviz/main/sheet-store.js?t=' + Date.now());
       const {seed} = await import('/assets/lib/dataviz/main/seed.js?t=' + Date.now());
+      const {listBlocks, blockPath, BLOCK_DIR} = await import('/assets/lib/dataviz/main/blocks.js?t=' + Date.now());
 
       // ── 應用層的文件狀態 ──────────────────────────────────────────────
       // 資料由應用層持有 (Tier 1)。block 拿到的是「值」, 不是檔案路徑 —
@@ -118,8 +119,12 @@ html
               loadText: rt.io.loadText, loadJSON: rt.io.loadJSON
             };
           };
+          // source: 名字 -> 原始碼。目錄約定 (blocks/<name>/index.html) 是這個 app 的,
+          // 所以由這裡告訴 sandbox, 而不是 sandbox 自己假設。
+          var sourceFor = function(name) { return rt.io.loadText(blockPath(name)); };
           return create('sandbox', document.getElementById('sandbox-root'),
-                        {api: API, io: rt.io, data: dataFor})
+                        {api: API, io: rt.io, data: dataFor, source: sourceFor,
+                         list: function() { return listBlocks(rt); }})
             .then(function(sb) {
               window.sb = sb;  // 方便在 console 觀察 (sb.snapshot)
               window.store = store;
@@ -162,7 +167,7 @@ html
               //  2. 「換一個東西給我看」  -> agent 明講的 open_block tool
               // 先前是用 write_file 的路徑去猜, 兩件事混在一起, 而且只猜得到 agent。
               function currentDir() {
-                return sb.current() ? 'blocks/' + sb.current() + '/' : null;
+                return sb.current() ? BLOCK_DIR + '/' + sb.current() + '/' : null;
               }
               rt.onFsChange(function(o) {
                 if(!sb.current()) { return; }
@@ -237,7 +242,7 @@ html
                 ].join('\n'),
                 // 動態: 現在是什麼狀況。每輪取一次, 附在對話尾端
                 context: function() {
-                  return rt.io.listBlocks().then(function(list) {
+                  return listBlocks(rt).then(function(list) {
                     var v = store.value();
                     return {
                       openedBlock: sb.current() || null,

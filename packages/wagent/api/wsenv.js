@@ -46,7 +46,7 @@ module.exports = function(opt) {
     },
     {
       name: 'write_file',
-      description: 'Create or overwrite a text file in the workspace, e.g. data files (data/*) or blocks (blocks/<name>/index.html). Use for new files or full rewrites; for small changes prefer edit_file.',
+      description: 'Create or overwrite a text file in the workspace. Use for new files or full rewrites; for small changes prefer edit_file.',
       parameters: {
         type: 'object',
         properties: {

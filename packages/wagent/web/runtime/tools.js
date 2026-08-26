@@ -10,7 +10,7 @@ export const shellTools = [
     description: 'Run a shell command in the workspace (POSIX-like shell with pipes, glob, redirects; ls/cat/grep/find/mkdir/rm/mv/sed etc). Use for exploring and for path operations. Do NOT use it to write file content — use write_file instead.',
     parameters: {
       type: 'object',
-      properties: {command: {type: 'string', description: 'shell command line, e.g. "ls -R blocks"'}},
+      properties: {command: {type: 'string', description: 'shell command line, e.g. "ls -R"'}},
       required: ['command'],
       additionalProperties: false
     }
@@ -23,7 +23,7 @@ export const contentTools = [
     description: 'Read a text file. Call this before editing an existing file.',
     parameters: {
       type: 'object',
-      properties: {path: {type: 'string', description: 'path relative to workspace, e.g. data/sales.csv'}},
+      properties: {path: {type: 'string', description: 'path relative to workspace root, e.g. notes.txt or src/main.js'}},
       required: ['path'],
       additionalProperties: false
     }

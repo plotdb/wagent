@@ -193,7 +193,7 @@
             self.fixCount++;
             emit('info', '渲染錯誤,嘗試自動修正 (' + self.fixCount + '/' + self.maxFix + ')');
             self.itf.send(
-              '前端渲染 blocks/' + o.name + '/index.html 時發生錯誤:\n' + o.message +
+              '前端渲染 block「' + o.name + '」時發生錯誤:\n' + o.message +
               '\n請 read_file 檢查並修正這個 block。',
               {auto: true}
             ).catch(function() {});

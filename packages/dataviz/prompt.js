@@ -6,6 +6,10 @@
 // 這整段對他都是雜訊。
 const PURPOSE = `目前的任務領域是資料視覺化 — block 的目的是把「執行環境餵進來的資料」畫成圖表。
 
+Workspace 結構 (這個應用的約定; wagent 本身不規定目錄怎麼分):
+ - blocks/<block-name>/index.html — 一個目錄一個 block, 新增時目錄名用簡短英文 kebab-case
+ - dev/sheet — 試算表的唯讀鏡像 (csv), 見下方
+
 資料從哪裡來:**不要讀檔**。使用者在頁面上的試算表裡編輯資料,
 執行環境會把解析好的結果直接注入 opt.data:
 

@@ -11,7 +11,7 @@
         var d = opt.data || {};
         this.api = d.api || '/api/agent';
         this.ws = d.workspace || '/workspace';
-        // d.io: browser runtime 注入 (loadText / loadJSON / listBlocks);
+        // d.io: browser runtime 注入 (loadText / loadJSON);
         // 不給則走 server 模式, 以 URL 取 workspace 檔案
         var ws = this.ws;
         this.io = d.io || {
@@ -26,14 +26,20 @@
               if(!r.ok) { throw new Error('load failed: ' + p); }
               return r.json();
             });
-          },
-          listBlocks: function() {
-            return fetch(d.api || '/api/agent' + '/blocks').then(function(r) { return r.json(); });
           }
         };
         // snapdom: 出圖的泛用路徑 (DOM -> 圖)。canvas / svg / shadow DOM 它自己會處理,
         // 所以 Chart.js 與 d3 都不必特別對待。只在需要出圖時才動態載入。
         this.snapdomUrl = d.snapdom || '/assets/lib/@zumer/snapdom/main/dist/snapdom.mjs';
+        // d.source: function(name) -> (Promise of) block 原始碼。應用層的窗口 —
+        // 「名字怎麼對應到檔案」是應用的目錄約定 (單一 block 的應用就是 /index.html,
+        // 多 block 的才有 blocks/<name>/index.html)。不給就把 name 當成路徑直接讀。
+        var io = this.io;
+        this.source = typeof d.source === 'function' ? d.source : function(n) { return io.loadText(n); };
+        // d.list: function() -> (Promise of) [{name, description}]。同樣是應用層的窗口 —
+        // 「有哪些可切換的東西」要知道目錄約定, 而單一 block 的應用根本沒有清單可列。
+        // 不給就是空清單, 視覺層會把切換選單收起來。
+        this.list = typeof d.list === 'function' ? d.list : function() { return []; };
         // d.data: function(blockName) -> (Promise of) 要交給 block 的 opt.data。
         // 這是應用層的窗口 — 資料的語意屬於應用, wagent 對它的內容一無所知。
         // 不給就是空的; block 拿不到任何東西也應該能跑。
@@ -386,7 +392,7 @@
             }
           });
           return Promise.all([
-            self.io.loadText('blocks/' + name + '/index.html'),
+            self.source(name),
             blockData(name)
           ]).then(function(r) {
             var cls = new window.block['class']({
@@ -486,7 +492,7 @@
             return self.itf;
           },
           current: function() { return self.current; },
-          list: function() { return self.io.listBlocks(); },
+          list: function() { return Promise.resolve().then(function() { return self.list() || []; }); },
           render: function(name, el) {
             self.el = el;
             self.inst = null;

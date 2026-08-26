@@ -39,6 +39,12 @@ fs 本身由 esh / zenfs 提供;host 決定掛什麼、掛在哪、可否寫入�
 分開的理由:使用者仍想在整棵樹裡逛,agent 不該。共用一個 shell 就只能二選一。
 「人與 agent 操作同一份 working tree」不受影響 —— 分的是**視野**,不是資料。
 
+fs 變更事件回報的是**絕對路徑**,而 rooted shell 只知道相對 root 的路徑,所以要補前綴。
+前綴必須**跟著當下的 root 走**:存啟動時的快照的話,`setAgentRoot` 之後回報的路徑
+就是拿舊 root 拼的,應用層比對必定落空 → 畫面不重畫,而 agent 看到的是
+「檔案改了但畫面沒動」,照 prompt 的指示回頭去修一個沒壞的 block。root 為 `/` 時
+前綴要是空字串(給 `/` 會拼出 `//blocks/...`)。
+
 預設 root 是 workspace。`rt.setAgentRoot(path)` 可再縮(host 端 API,shell 內呼叫不到),
 但要注意縮到單一 block 目錄後 agent 就**建不了新 block**、也看不到掛在 workspace 層的 device ——
 那是「應用決定編輯對象」的嵌入情境(composer / makechart)才適用,不是這個 demo 的工作流。
@@ -199,11 +205,33 @@ makechart 的 `raw` / `bind` —— 對它是全盲的,而**它會用猜的**。
  - block 端必須有 **host 不存在時的 fallback** — block 會被發佈到別處(makechart、composer、任意網頁)執行,不能假設 host 存在;
    host 端也一樣,client 沒實作就走泛用路徑
 
+### 拓樸:wagent 不知道檔案放哪
+
+**目錄形狀是應用層的約定。** 一個只編輯單一 block 的應用,檔案就在 `/index.html`,
+根本沒有 `blocks/`;一個拿 wagent 做遊戲的人,目錄長什麼樣是他自己的事。
+判準與資料、與 prompt 的 purpose 同一條。
+
+先前這個假設漏在 wagent 五個地方(`blocks/<name>/index.html` 寫死在 prompt 的
+Workspace 結構、`compose()` 拼出的編輯對象、`runtime` 的 `io.listBlocks`、
+sandbox 的 `mount()` 與切換選單),已經全部移到應用層。sandbox 因此有**三個窗口**:
+
+    create('sandbox', el, {
+      io,                                  // 泛用讀寫 (不含「列出 block」)
+      data:   function(name) { ... },      // 這個 block 拿到的 opt.data
+      source: function(name) { ... },      // 名字 -> 原始碼 (不給就把 name 當路徑)
+      list:   function() { ... }           // 可切換的清單 (不給就收起選單)
+    })
+
+prompt 那側也一樣:`BASE` 只講 block 的**檔案格式**,不講它放哪;
+`compose()` 只說「正在編輯 block 甲」,不拼路徑。目錄約定由應用層寫在 `brief` / `purpose`
+(見 `packages/dataviz/prompt.js` 與 `packages/dataviz/web/blocks.js`)。
+
+> 註:server 模式的 `wsenv.listBlocks()` 與 `/blocks` route 仍留著同樣的假設。
+> 那條路徑目前只有舊的 refactor-0809 demo 在用,拆掉會動到它,尚未處理。
+
 ### 資料:wagent 不碰
 
 `opt.data` 的**內容由應用層決定,wagent 對它一無所知**。sandbox 只是把應用層給的物件原封不動交給 block。
-
-    create('sandbox', el, {api, io, data: function(blockName) { ... }})
 
  - 不給 `data` 就是空的 — block 拿不到任何東西也應該能跑
  - 資料的語意(csv 怎麼解、哪一欄對哪個維度)屬於應用層。判準:**一個拿 wagent 做遊戲、

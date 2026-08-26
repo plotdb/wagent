@@ -2,6 +2,22 @@
 
 ## master
 
+ - fixes:
+   - `fs-change` 的路徑前綴改成跟著當下的 agent root 走。先前在建監聽時就把 root 存成
+     常數,`setAgentRoot` 之後回報的路徑是拿舊 root 拼的 — 應用層比對落空 → 不重畫,
+     而 agent 看到「檔案改了但畫面沒動」,會回頭去修一個沒壞的 block。
+     順帶把 root 為 `/` 的情況正規化(原本會拼出 `//blocks/...`)。
+     `setAgentRoot` 目前沒有呼叫點,所以從未觸發過
+ - refactor:
+   - **workspace 拓樸移出 wagent**。`blocks/<name>/index.html` 這個目錄約定原本寫死在
+     prompt 的 Workspace 結構、`compose()`、`runtime` 的 `io.listBlocks`、sandbox 的
+     `mount()` 與切換選單 — 判準與先前 SEED / DATAVIZ 同一條:單一 block 的應用
+     根本沒有 `blocks/`。sandbox 改由應用層供給 `source(name)` 與 `list()`
+     (`data(name)` 已在);`io.listBlocks` 移到 `packages/dataviz/web/blocks.js`;
+     `BASE` 只講 block 的檔案格式,目錄約定寫在應用層的 brief / purpose。
+     (server 模式的 `wsenv.listBlocks` / `/blocks` route 仍留著,舊 demo 在用)
+   - `IO_BROWSER` 不再宣告 `opt.data` 注入的是 loader — 那與 dataviz purpose 的
+     「不要 loadText」互相矛盾,agent 等於同時收到兩套指示
  - features:
    - host 觀察通道:`snapshot` tool — 回結構化報告(size / blank / canvas ink ratio /
      svg 圖形數 / 可見文字 / 與上次的差異量),不出圖不花 vision token。

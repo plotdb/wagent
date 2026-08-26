@@ -126,26 +126,13 @@ export function createRuntime(opt) {
       function abs(p) {
         return (p || '').charAt(0) === '/' ? p : `${o.root}/${p}`;
       }
+      // 泛用的檔案讀寫。**不提供「列出 block」** — 那需要知道 block 放在哪個目錄、
+      // 檔名叫什麼, 而目錄形狀是應用層的約定 (單一 block 的應用根本沒有 blocks/)。
+      // 應用要列清單就用 sh.run + io.loadText 自己組 (見 packages/dataviz/web/blocks.js)。
       const io = {
         loadText: function(p) { return sh.io.readFile(abs(p)); },
         loadJSON: function(p) { return sh.io.readFile(abs(p)).then(JSON.parse); },
-        writeText: function(p, c) { return sh.io.writeFile(abs(p), c); },
-        // block 清單: 目錄名 + 從原始碼取 description
-        listBlocks: function() {
-          return sh.run(`ls ${o.root}/blocks`).then(function(r) {
-            const names = (r.stdout || '').split('\n')
-              .map(function(s) { return s.trim(); })
-              .filter(Boolean);
-            return Promise.all(names.map(function(n) {
-              return sh.io.readFile(`${o.root}/blocks/${n}/index.html`)
-                .then(function(src) {
-                  const m = src.match(/description:\s*(['"])((?:\\.|(?!\1).)*)\1/);
-                  return {name: n, description: m ? m[2] : ''};
-                })
-                .catch(function() { return null; });
-            })).then(function(list) { return list.filter(Boolean); });
-          });
-        }
+        writeText: function(p, c) { return sh.io.writeFile(abs(p), c); }
       };
       return {
         worker: worker, sh: sh, io: io, transport: transport,
