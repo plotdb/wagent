@@ -84,7 +84,7 @@ esh 實例,負責路徑操作與探索(`ls` / `cat` / `grep` / `find` / `mkdir` 
 **host 可註冊自訂指令**,這是能力擴充的主要出口。新能力預設應該做成 shell 指令,而不是新的 LLM tool:
 
  - LLM 的 tool 清單保持固定且短,不隨環境膨脹(tool 一多,模型選擇品質下降)
- - 指令可組合(`ls blocks | grep chart`)
+ - 指令可組合(`ls src | grep util`)
  - 發現機制現成(`help`、`--help`)
 
 不要用 shell 寫入檔案內容 — 重導向的內容會經過 shell parser。內容一律走 content ops。
@@ -127,6 +127,42 @@ esh 實例,負責路徑操作與探索(`ls` / `cat` / `grep` / `find` / `mkdir` 
 **snapshot 不做成 shell 指令**,理由:fs 描述的是 block 的原始碼,snapshot 的對象是一次 render 的結果,而 render 參數(尺寸、entry、資料)是 host 的 session 狀態,不在 fs 裡。寫成 `snapshot index.html` 會看起來像檔案操作,實際上在操作 shell 看不見的東西。
 
 snapshot 的輸出也不落地到 workspace — 成果目錄只放成果。需要落地(讓人看得到、存成 thumbnail、多 sandbox 定址)時,再考慮加 `/tmp`、`/dev` 這類端點。
+
+#### headless renderer — 沒有使用者在場時的觀察通道
+
+snapshot 是契約裡**唯一必要**的那塊,而它需要一個 renderer。Node 沒有 DOM,
+所以「wagent 在 Node 上跑」如果不解決這件事,得到的是一個**看不見自己成果的 agent** ——
+而這整個分支的工作有一半是在建立那條觀察通道。
+
+解法是把渲染交給 headless 瀏覽器。附帶的好處不小:CDP 的 `Page.captureScreenshot`
+抓的是**真實合成後的畫面**,不是 snapdom 的 foreignObject 重繪,所以下方「未定案」
+裡 `getDisplayMedia` 想解決的失真問題,以及 WebGL `preserveDrawingBuffer`、
+`capture` 沒實作的情況,在這條路上一併消失 —— 而且不需要使用者手勢授權。
+
+**關鍵限制:renderer 不持有 fs。**
+
+    Node 端                                headless page
+    ─────────────────────────────────      ────────────────────────
+    持有 fs (真磁碟)                        沒有 fs
+    跑 agent loop                    ──►    掛上去、等穩定、出報告
+    決定要畫什麼                             {report, image}
+                                     ◄──
+      { source, data, width, height, time }
+
+讓 headless 那頁也持有一份 fs(OPFS)是**明確錯誤的做法** —— Node 一份、瀏覽器一份,
+就又是「兩份狀態、一條要自己維護的同步線」,本專案反覆出事的形狀
+(store/UI、snapshot/實際渲染、fs-change prefix/root)。
+
+正確的模型跟我們對 block 做的事**是同一條原則**:餵值,不餵路徑。block 拿到的是
+`opt.data` 的值所以換環境就能跑;renderer 拿到的是 `source` 的字串,所以它不需要知道
+workspace 存在。sandbox 那塊程式碼因此一行都不用改 —— 它本來就只吃 `source` 與 `data`
+兩個應用層窗口。
+
+**打包:** headless 依賴瀏覽器本體(數百 MB),不能是 `@plotdb/wagent` 的必要相依。
+獨立套件 + `playwright` 列 peer,由使用情境決定裝不裝。
+
+**已知待驗:** headless 對背景頁的節流行為與一般分頁不同,而我們已經有一條
+「背景分頁凍結 rAF」的提示。headless 下該調哪些 flag、那條提示還準不準,要實測。
 
 ### 5. tools(選用)— host 額外提供的 LLM tool
 

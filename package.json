@@ -49,5 +49,8 @@
         "dir": "web"
       }
     ]
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
   }
 }

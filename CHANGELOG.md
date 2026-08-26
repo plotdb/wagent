@@ -3,6 +3,14 @@
 ## master
 
  - features:
+   - **`@plotdb/wagent-headless`** — 沒有使用者在場時的觀察通道。snapshot 是契約裡
+     唯一必要的那塊而它需要 renderer;Node 沒有 DOM, 不解決就是一個看不見自己成果的
+     agent。renderer **不持有 fs** —— 餵 source 字串與 data 值, 不餵路徑
+     (跟 block 拿 opt.data 而非路徑是同一條原則;讓它也持一份 OPFS 就會變成兩份狀態)。
+     圖走 CDP 截圖 = 真實合成後的畫面, 順帶解掉 snapdom 的 foreignObject 失真、
+     WebGL preserveDrawingBuffer、以及 getDisplayMedia 需要使用者手勢的問題。
+     playwright 列 peer (瀏覽器本體數百 MB, 裝不裝是部署決定)。
+     sandbox 那塊程式碼一行沒改 —— 它本來就只吃 source / data 兩個窗口
    - `createRuntime({mounts})` — fs 組態開給應用層 (host 契約的第一塊, 先前寫死 OPFS)。
      `{'/home': {backend: 'opfs' | 'indexeddb' | 'memory'}}`;device mount 仍由 worker
      自己併入 (必須落在 agent root 之內)。限制: 只吃可 JSON 序列化的設定 —
