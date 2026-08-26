@@ -1,0 +1,5 @@
+node_modules
+logs
+.env
+web/.view
+web/static/assets/lib

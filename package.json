@@ -1,0 +1,47 @@
+{
+  "name": "wagent-workspace",
+  "private": true,
+  "version": "0.2.0",
+  "description": "@plotdb/wagent — monorepo 與 demo 頁面",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "log": "tail -n 100 -f logs/server.log",
+    "postinstall": "fedep"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@plotdb/block": "^5.7.3",
+    "@plotdb/csscope": "^5.0.4",
+    "@plotdb/esh": "^0.4.2",
+    "@plotdb/rescope": "^5.0.17",
+    "@plotdb/semver": "^0.0.4",
+    "@plotdb/srcbuild": "^0.0.70",
+    "@zumer/snapdom": "^2.24.1",
+    "express": "^5.2.1",
+    "fedep": "^1.7.4",
+    "proxise": "^1.0.1",
+    "stylus": "^0.64.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
+  },
+  "frontendDependencies": {
+    "root": "web/static/assets/lib",
+    "modules": [
+      "@plotdb/block",
+      "@plotdb/csscope",
+      "@plotdb/rescope",
+      "@plotdb/semver",
+      "proxise",
+      "@plotdb/esh",
+      "@zumer/snapdom",
+      {
+        "name": "@plotdb/wagent",
+        "dir": "web"
+      }
+    ]
+  }
+}

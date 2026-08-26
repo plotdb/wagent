@@ -1,0 +1,118 @@
+<div>
+  <!-- chat base 層: headless, 只有邏輯。視覺由 extend 此 block 的 derived 層實作。 -->
+  <script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'chat-base',
+        version: 'main',
+        description: 'chat 邏輯層: 對話 api 溝通、事件廣播 (不決定畫面)'
+      },
+      init: function(opt) {
+        var d = opt.data || {};
+        this.api = d.api || '/api/agent';
+        this.blockName = d.block || null;
+        this.session = d.session || ('draft-' + Math.random().toString(36).slice(2, 10));
+        this.sandbox = d.sandbox || null;
+        // d.transport: browser runtime 注入 ({send(text, cb), reset()})。必要 —
+        // agent loop 在本機 worker 裡, chat 只是它的介面層。
+        this.transport = d.transport || null;
+        // 渲染錯誤自動修正: 只修 LLM 剛寫的 block, 同一輪最多 maxFix 次,
+        // 成功渲染或用戶手動發話即歸零。data.autoFix = false 可關閉。
+        this.autoFix = d.autoFix !== false;
+        this.maxFix = d.maxFix || 2;
+        this.fixCount = 0;
+        this.wrote = false;      // 這一輪 agent 有沒有寫過檔 (自動修正的 safe guard)
+        this.handlers = {};
+      },
+      interface: function() {
+        var self = this;
+        if(this.itf) { return this.itf; }
+        function emit(ev, data) {
+          (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
+        }
+        // chat 不決定畫面。「什麼時候該重畫」屬於 application —
+        // 只有它知道現在畫的是什麼、編輯範圍到哪, 而且變更的來源不只 agent
+        // (使用者的終端機、頁面上的 codemirror 都算)。改由 host 的 fs 變更事件驅動。
+        //
+        // 這裡只記「這一輪 agent 到底有沒有寫過東西」, 供自動修正的 safe guard 用。
+        // 那是對話層的知識, 不需要知道任何路徑慣例。
+        function noteWrite(ev) {
+          if((ev.tool === 'write_file' || ev.tool === 'edit_file') && !ev.error) {
+            self.wrote = true;
+          }
+        }
+        this.itf = {
+          on: function(ev, fn) {
+            (self.handlers[ev] = self.handlers[ev] || []).push(fn);
+            return self.itf;
+          },
+          block: function() { return self.blockName; },
+          setBlock: function(name) {
+            self.blockName = name;
+            emit('block', name);
+          },
+          send: function(text, o) {
+            if(!(o && o.auto)) { self.fixCount = 0; self.wrote = false; }  // 用戶手動發話, 歸零
+            emit('busy', true);
+            // agent loop 在本機 worker; transport 由 runtime 注入 (createRuntime().transport)
+            if(!self.transport) {
+              return Promise.reject(new Error('chat: 缺少 transport — 用 createRuntime() 取得後傳進來'));
+            }
+            return self.transport.send(text, {
+                block: self.blockName,
+                session: self.blockName || self.session,
+                onDelta: function(t) { emit('delta', t); },
+                // start 用來顯示「正在做什麼」; end 只在失敗時再發一則 (顯示成 ✗)。
+                // 兩段都發的話, 視覺層會每個 tool 畫兩行。
+                onTool: function(ev) {
+                  if(ev.phase !== 'end') { return emit('tool', ev); }
+                  noteWrite(ev);
+                  if(ev.error) { emit('tool', ev); }
+                }
+              })
+                .then(function(j) {
+                  emit('reply', j.reply || '');
+                  emit('busy', false);
+                  return j;
+                })
+                .catch(function(e) {
+                  emit('busy', false);
+                  emit('error', e);
+                  throw e;
+                });
+          },
+          reset: function() {
+            if(self.transport) { self.transport.reset(self.blockName || self.session); }
+            return Promise.resolve({ok: true});
+          },
+          provider: function() {
+            return fetch(self.api + '/provider').then(function(r) { return r.json(); });
+          }
+        };
+        // 渲染錯誤自動修正 (帶 safe guard, 見 init 註解)
+        if(this.sandbox && this.sandbox.on) {
+          this.sandbox.on('rendered', function(name) {
+            if(name === self.blockName) { self.fixCount = 0; }
+          });
+          this.sandbox.on('render-error', function(o) {
+            // 只修 agent 這一輪真的寫過、而且是目前編輯對象的 block —
+            // 否則使用者打開一個本來就壞掉的 block, agent 會自作主張去改它
+            if(!self.autoFix || !self.wrote || o.name !== self.blockName) { return; }
+            if(self.fixCount >= self.maxFix) {
+              emit('info', '自動修正已達 ' + self.maxFix + ' 次上限,請手動處理: ' + o.message);
+              return;
+            }
+            self.fixCount++;
+            emit('info', '渲染錯誤,嘗試自動修正 (' + self.fixCount + '/' + self.maxFix + ')');
+            self.itf.send(
+              '前端渲染 block「' + o.name + '」時發生錯誤:\n' + o.message +
+              '\n請 read_file 檢查並修正這個 block。',
+              {auto: true}
+            ).catch(function() {});
+          });
+        }
+        return this.itf;
+      }
+    };
+  </script>
+</div>
