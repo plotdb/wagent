@@ -58,10 +58,6 @@ module.exports = function(opt) {
     res.json(Object.assign({stream: allowed}, llm.info()));
   });
 
-  router.get('/blocks', (req, res) => {
-    res.json(env.listBlocks());
-  });
-
   // browser runtime 取 system prompt (prompt 邏輯只留一份, 在後端)
   router.get('/prompt', (req, res) => {
     res.json({system: prompt.compose(purpose, req.query.block || null, req.query.mode || 'browser')});

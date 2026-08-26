@@ -2,7 +2,16 @@
 
 ## master
 
+ - features:
+   - `createRuntime({mounts})` — fs 組態開給應用層 (host 契約的第一塊, 先前寫死 OPFS)。
+     `{'/home': {backend: 'opfs' | 'indexeddb' | 'memory'}}`;device mount 仍由 worker
+     自己併入 (必須落在 agent root 之內)。限制: 只吃可 JSON 序列化的設定 —
+     worker 是另一個 realm, 傳不了 backend class
+ - removed:
+   - `/blocks` route 與 `wsenv.listBlocks()` — 沒有任何使用者 (首頁打的是 `./api`,
+     refactor-0809 打的是自己的複本), 且帶著 `blocks/<name>/index.html` 的拓樸假設
  - fixes:
+   - 容器無尺寸的提示不再提「chart」— 那是所有 block 都會遇到的事
    - `fs-change` 的路徑前綴改成跟著當下的 agent root 走。先前在建監聽時就把 root 存成
      常數,`setAgentRoot` 之後回報的路徑是拿舊 root 拼的 — 應用層比對落空 → 不重畫,
      而 agent 看到「檔案改了但畫面沒動」,會回頭去修一個沒壞的 block。

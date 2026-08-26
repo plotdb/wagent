@@ -12,8 +12,17 @@ export function createRuntime(opt) {
   const o = Object.assign({}, DEFAULTS, opt || {});
   // devices: 要以檔案形式提供給 agent 的應用層資料 (名單在建 shell 前就要定, readdir 由它決定)
   const devices = (o.devices || []).join(',');
+  // mounts: fs 組態 — host 契約的第一塊, 由應用層決定資料存哪 (預設 /home -> OPFS)。
+  //   {'/home': {backend: 'opfs'}}        瀏覽器持久化 (預設)
+  //   {'/home': {backend: 'indexeddb'}}   OPFS 不可用時的替代
+  //   {'/home': {backend: 'memory'}}      不落地 (測試 / 一次性)
+  // 限制: 必須是**可 JSON 序列化的設定**。worker 是另一個 realm, 傳不了 backend class,
+  // 所以要用 zenfs 的自訂 backend 物件得改在 worker 端註冊, 不能從這裡塞。
+  // device mount 由 worker 自己併入 (它必須落在 agent root 之內, 順序不能反)。
+  const mounts = o.mounts ? JSON.stringify(o.mounts) : '';
   const url = `${o.worker}?api=${encodeURIComponent(o.api)}&esh=${encodeURIComponent(o.esh)}` +
     (devices ? `&devices=${encodeURIComponent(devices)}` : '') +
+    (mounts ? `&mounts=${encodeURIComponent(mounts)}` : '') +
     (o.agentRoot ? `&root=${encodeURIComponent(o.agentRoot)}` : '');
   const worker = new Worker(url, {type: 'module'});
   const prefix = `c${Math.random().toString(36).slice(2, 8)}-`;

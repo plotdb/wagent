@@ -43,17 +43,25 @@ function deviceFiles() {
   return files;
 }
 
-const mounts = {'/home': {backend: 'opfs'}};
+// fs 組態由應用層決定 (host 契約第一塊)。不給就是 OPFS —— 瀏覽器的合理預設。
+// 只吃可 JSON 序列化的設定: worker 是另一個 realm, 傳不了 backend class。
+let mounts = {'/home': {backend: 'opfs'}};
+const mountsParam = params.get('mounts');
+if(mountsParam) {
+  try { mounts = JSON.parse(mountsParam); }
+  catch(e) { console.warn('wagent: mounts 參數不是合法 JSON, 用預設值', e); }
+}
+// device 一定由這裡併入: 它必須落在 agent root 之內, 而且值的來源在主執行緒。
 if(deviceNames.length) { mounts[`${ROOT}/dev`] = {backend: 'device', files: deviceFiles()}; }
 
 let persist = 'in-memory';
 let sh;
 try {
   sh = await esh.createShell({mounts: mounts});
-  persist = 'opfs';
+  persist = (mounts['/home'] && mounts['/home'].backend) || 'mounted';
 } catch(e) {
   sh = await esh.createShell();
-  persist = `in-memory (OPFS 掛載失敗: ${e.message})`;
+  persist = `in-memory (掛載失敗: ${e.message})`;
 }
 
 // workspace 的初始內容由**應用層**植入 (見 packages/dataviz/web/seed.js):

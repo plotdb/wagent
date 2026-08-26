@@ -126,23 +126,5 @@ module.exports = function(opt) {
     throw new Error(`unknown tool: ${name}`);
   }
 
-  function listBlocks() {
-    const dir = path.join(ROOT, 'blocks');
-    if(!fs.existsSync(dir)) { return []; }
-    return fs.readdirSync(dir, {withFileTypes: true})
-      .filter((e) => e.isDirectory() && fs.existsSync(path.join(dir, e.name, 'index.html')))
-      .map((e) => {
-        const file = path.join(dir, e.name, 'index.html');
-        const src = fs.readFileSync(file, 'utf8');
-        const m = src.match(/description:\s*(['"])((?:\\.|(?!\1).)*)\1/);
-        return {
-          name: e.name,
-          description: m ? m[2] : '',
-          updatedAt: fs.statSync(file).mtimeMs
-        };
-      })
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  return {root: ROOT, safePath, tools, runTool, listBlocks};
+  return {root: ROOT, safePath, tools, runTool};
 };

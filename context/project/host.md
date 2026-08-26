@@ -29,6 +29,16 @@ fs 本身由 esh / zenfs 提供;host 決定掛什麼、掛在哪、可否寫入�
     browser:  /home/workspace -> OPFS
     server:   /home/workspace -> Passthrough(node:fs, '<dir>')
 
+由應用層以 `createRuntime({mounts})` 指定,不給就是 OPFS。只吃可 JSON 序列化的設定 ——
+worker 是另一個 realm,傳不了 backend class。
+
+> **但 node 那半目前不成立。** esh 的 node entry(`src/node-entry.js`)是「零墊片」——
+> 直接綁真 `fs`,`opts.mounts` 被忽略,也因此**沒有 chroot**(scope hooks 是瀏覽器 bundle 限定)
+> **與 device**。zenfs 2.6.2 在 node 有 `Passthrough` / `DeviceFS` / `Port`,
+> 卡住的是 shelljs 會解析到真 `fs`,要走 zenfs 得做跟瀏覽器 bundle 一樣的 alias。
+> 這是 esh 的工作,不是 wagent 的。在它完成之前,「同一份 host 定義前後端通用」
+> 只是契約上的話。
+
 同一份 host 定義前後端通用,差別只在 mount table。`@zenfs/core` 另有 `Fetch`(唯讀遠端)、`Port`(跨 worker)、`CoW` 等 backend 可用。
 
 **agent 與使用者的終端機用不同的 shell、同一份 fs**(esh 0.4.2 的 per-shell root):

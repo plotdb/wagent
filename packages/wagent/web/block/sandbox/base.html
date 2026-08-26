@@ -299,7 +299,7 @@
             r.hint = 'the block threw before it could render — fix the error above. ' +
               'everything else in this report is a consequence of that, not a separate problem.';
           } else if(!box.width || !box.height) {
-            r.hint = 'the container has zero width or height — give the chart/canvas wrapper an explicit size.';
+            r.hint = 'the container has zero width or height — give the block\'s outer wrapper an explicit size.';
           } else if(blank) {
             // 背景分頁的空白不是 block 的錯 — 講清楚, 否則 agent 會去修一個不存在的 bug
             r.hint = (env && env.rafFired === false)
