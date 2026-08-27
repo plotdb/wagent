@@ -32,6 +32,21 @@ app.use('/', express.static('web/static'));
 const port = process.env.PORT || 0;
 const server = app.listen(port, () => {
   const p = server.address().port;
-  require('./lib/log')('server', `listening on http://localhost:${p}`);
+  const url = `http://localhost:${p}`;
+  require('./lib/log')('server', `listening on ${url}`);
   srcbuild.lsp({base: 'web'});
+  // port 是隨機的, 所以順手把瀏覽器開起來 —— 不然每次都得回頭看 log。
+  // NO_OPEN=1 關掉 (在 CI、或用 --inspect 這種只要 server 的場合)。
+  if(!process.env.NO_OPEN) { openBrowser(url); }
 });
+
+// 不引 open 套件: 它現在是 ESM-only, 在 CommonJS 這裡要 dynamic import,
+// 為了三行平台判斷不值得多一個相依。開不起來就算了 —— log 裡有網址。
+function openBrowser(url) {
+  const cmd = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'start' : 'xdg-open';
+  const child = require('child_process')
+    .spawn(cmd, [url], {stdio: 'ignore', detached: true, shell: process.platform === 'win32'});
+  child.on('error', () => {});
+  child.unref();
+}
