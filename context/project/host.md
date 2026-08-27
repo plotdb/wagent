@@ -113,6 +113,12 @@ worker 的 postMessage,local 與 remote 才能是同一組 API。
 `multiple-blocks` 的 sample 就是這樣做的。不要用 `ls -R` 解析 stdout:那得靠
 「有沒有人以它為前綴」猜誰是目錄,空目錄會被誤判成檔案。
 
+> **應用層自己的模組放哪。** 這個 repo 的 `sample/dataviz/` 是一個有領域的應用:
+> 文件狀態、csv、seed、目錄約定、領域 prompt。它不經 srcbuild(那是頁面的事),
+> 由 server 直接以 ES module 交出去;`purpose` 則掛在**自己的 api mount**
+> (`/api/dataviz`)—— 一台 server 上可以有好幾個應用,各有各的領域 prompt。
+> 分這一刀的理由:應用換個頁面照樣能用。
+
 ### 4. snapshot — 觀察通道
 
 **必要。** 「這個 host 是不是 agent-compatible」就是靠它定義。

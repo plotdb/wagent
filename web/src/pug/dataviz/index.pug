@@ -1,0 +1,47 @@
+doctype html
+html
+  head
+    meta(charset="utf-8")
+    meta(name="viewport" content="width=device-width, initial-scale=1")
+    title wagent — dataviz sample
+    //- block 的執行環境
+    script(src="/assets/lib/proxise/main/index.min.js")
+    script(src="/assets/lib/@plotdb/semver/main/index.min.js")
+    script(src="/assets/lib/@plotdb/csscope/main/index.min.js")
+    script(src="/assets/lib/@plotdb/rescope/main/index.min.js")
+    script(src="/assets/lib/@plotdb/block/main/index.min.js")
+    //- 這個 sample **有領域**: 它是資料視覺化, 所以預載圖表函式庫並在
+    //- 後端代入 dataviz 的 purpose。另外兩個 sample 兩者都沒有。
+    script(src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js")
+    script(src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js")
+    link(rel="stylesheet" href="/assets/lib/@plotdb/sheet/main/index.min.css")
+    script(src="/assets/lib/@plotdb/sheet/main/index.min.js")
+    style(type="text/css"): include:stylus index.styl
+  body
+    #chat-root
+    .main
+      .bar
+        span#current —
+      #sandbox-root
+      .sheet-pane
+        .bar
+          span
+            b sheet
+            |  — 資料由應用層持有, 改這裡圖就重畫
+          span#sheet-info
+        #sheet-root
+
+    script(type="module").
+      window.wagentRuntime = import('/assets/lib/@plotdb/wagent/main/runtime/client.js');
+      // 應用層模組住在 sample/dataviz/ (由 server 掛在 /sample 下)。
+      // 它們不經 srcbuild — 那是「應用」不是「頁面」, 換個頁面照樣能用。
+      window.dataviz = Promise.all([
+        import('/sample/dataviz/sheet-store.js'),
+        import('/sample/dataviz/seed.js'),
+        import('/sample/dataviz/blocks.js')
+      ]).then(function(m) {
+        return {createStore: m[0].createStore, seed: m[1].seed,
+                listBlocks: m[2].listBlocks, blockPath: m[2].blockPath,
+                BLOCK_DIR: m[2].BLOCK_DIR};
+      });
+    script(type="module"): include:lsc index.ls

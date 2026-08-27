@@ -17,10 +17,13 @@ html
   body
     .wrap
       h1 wagent samples
-      .sub 兩個 sample 的差別只有拓樸 —— wagent 對兩種都一無所知。
+      .sub 前兩個的差別只有拓樸 —— wagent 對兩種都一無所知。第三個示範反面:一個應用怎麼把自己的領域講給 agent 聽。
       a.card(href="/single-block/")
         b single-block
         span 一個 block(/index.html)。最小的用法:對話、渲染、觀察通道。
       a.card(href="/multiple-blocks/")
         b multiple-blocks
         span blocks/&lt;name&gt;/index.html。加上唯讀檔案樹,點檔案切換預覽對象。
+      a.card(href="/dataviz/")
+        b dataviz
+        span 有領域的應用(sample/dataviz)。試算表是資料的真相,以「值」餵給 block —— block 不讀檔。agent 那端則是 dev/sheet 與 write_sheet。

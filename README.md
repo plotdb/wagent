@@ -7,6 +7,8 @@ and — this is the part that matters — can see what it renders.
     packages/wagent-headless   renderer for when no user's browser is present
     web/src/pug/single-block     sample: one block at /index.html
     web/src/pug/multiple-blocks  sample: blocks/<name>/, with a read-only file tree
+    web/src/pug/dataviz          sample page for the application in sample/dataviz
+    sample/dataviz             an application with a domain — data flows to the block as a value
     context/project/host.md    the design record — read this first
 
 ## Run the sample
@@ -16,12 +18,19 @@ and — this is the part that matters — can see what it renders.
     npm start                                 # random port, opens the browser
                                               # PORT=4000 to pin it, NO_OPEN=1 to not open
 
-Two samples, differing **only in topology** — wagent knows neither:
+Three samples. The first two differ **only in topology** — wagent knows neither:
 
  - `/single-block/` — one block at `/index.html`. The smallest useful setup.
  - `/multiple-blocks/` — `blocks/<name>/index.html`, plus a read-only file tree on the
    left. Click a file to switch what the preview shows; ask the agent for a new block
    and it appears in the tree.
+
+The third one shows the opposite side — an application that *does* have a domain:
+
+ - `/dataviz/` — a spreadsheet is the source of truth. The block gets **values**
+   (`opt.data`), never a path; the agent reads the same data as a read-only device file
+   (`dev/sheet`) and writes it back through a `write_sheet` tool. Its domain prompt is
+   mounted separately at `/api/dataviz`. See `sample/dataviz/README.md`.
 
 ## The shape of it
 
