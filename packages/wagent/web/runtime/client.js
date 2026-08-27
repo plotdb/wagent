@@ -165,7 +165,11 @@ export function createRuntime(opt) {
       const io = {
         loadText: function(p) { return sh.io.readFile(abs(p)); },
         loadJSON: function(p) { return sh.io.readFile(abs(p)).then(JSON.parse); },
-        writeText: function(p, c) { return sh.io.writeFile(abs(p), c); }
+        writeText: function(p, c) { return sh.io.writeFile(abs(p), c); },
+        // esh 0.5.0: 目錄列舉。回的是純 JSON 形狀 (名字, 或 {name, isDirectory}),
+        // 不是 Dirent —— 因為要跨 worker 的 postMessage。
+        readdir: function(p, opt) { return sh.io.readdir(abs(p), opt); },
+        stat: function(p) { return sh.io.stat(abs(p)); }
       };
       return {
         worker: worker, sh: sh, io: io, transport: transport,

@@ -32,12 +32,15 @@ fs 本身由 esh / zenfs 提供;host 決定掛什麼、掛在哪、可否寫入�
 由應用層以 `createRuntime({mounts})` 指定,不給就是 OPFS。只吃可 JSON 序列化的設定 ——
 worker 是另一個 realm,傳不了 backend class。
 
-> **但 node 那半目前不成立。** esh 的 node entry(`src/node-entry.js`)是「零墊片」——
-> 直接綁真 `fs`,`opts.mounts` 被忽略,也因此**沒有 chroot**(scope hooks 是瀏覽器 bundle 限定)
-> **與 device**。zenfs 2.6.2 在 node 有 `Passthrough` / `DeviceFS` / `Port`,
-> 卡住的是 shelljs 會解析到真 `fs`,要走 zenfs 得做跟瀏覽器 bundle 一樣的 alias。
-> 這是 esh 的工作,不是 wagent 的。在它完成之前,「同一份 host 定義前後端通用」
-> 只是契約上的話。
+**node 那半在 esh 0.5.0 成立了。** 走 `@plotdb/esh/node-zenfs`(不是預設的
+`.` entry —— 那個仍是「零墊片」:直接綁真 `fs`,忽略 mounts、沒有 chroot 與 device),
+mounts / chroot / device 三個在 Node 全通,`passthrough` backend 把真磁碟的子目錄
+掛進虛擬 fs(對應瀏覽器的 opfs)。需 node ≥ 20.16。
+
+`test/node-esh.mjs` 是這個組合的驗收(21 項):chroot 爬不出去、passthrough 雙向可見、
+append 不清空、readdir/stat、device 的值不落磁碟、指向 jail 外的 symlink 讀不到。
+**symlink 圍堵預設是開的** —— chroot 管不到真磁碟的 symlink,真 fs 解析會直接穿出去,
+所以那條線是 esh 在 fs 層另外擋的。要關得明講 `followSymlinks: true`。
 
 同一份 host 定義前後端通用,差別只在 mount table。`@zenfs/core` 另有 `Fetch`(唯讀遠端)、`Port`(跨 worker)、`CoW` 等 backend 可用。
 
@@ -98,6 +101,17 @@ esh 實例,負責路徑操作與探索(`ls` / `cat` / `grep` / `find` / `mkdir` 
  - `edit_file(path, old_string, new_string, replace_all?)` — 精確字串取代,小改用這個
 
 `edit_file` 帶**樂觀鎖**:記住上次交給 LLM 的內容,edit 前重讀比對,被外部改過則拒絕並要求重讀。這是本專案特有的併發來源 — 使用者可能在 esh-term 動同一份 tree,未來 block 也可能寫檔。
+
+應用層自己則透過 `rt.io` 讀寫 workspace(相對路徑以 agent root 為基準):
+`loadText` / `loadJSON` / `writeText`,以及 esh 0.5.0 起的 `readdir(path, {withFileTypes})`
+/ `stat(path)`。後兩個回的是**純 JSON 形狀**(`{name, isDirectory}` /
+`{size, mtimeMs, isFile, isDirectory}`)而不是 Node 的 Dirent/Stats —— 因為要跨
+worker 的 postMessage,local 與 remote 才能是同一組 API。
+
+`rt.io` 刻意**不提供「列出 block」**:那需要知道 block 放在哪個目錄、檔名叫什麼,
+而目錄形狀是應用層的約定(見〈拓樸〉)。要畫檔案樹就用 `readdir` 自己遞迴 ——
+`multiple-blocks` 的 sample 就是這樣做的。不要用 `ls -R` 解析 stdout:那得靠
+「有沒有人以它為前綴」猜誰是目錄,空目錄會被誤判成檔案。
 
 ### 4. snapshot — 觀察通道
 

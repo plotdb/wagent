@@ -10,6 +10,6 @@
   },
   "peerDependencies": {
     "@plotdb/block": ">=5.7.3",
-    "@plotdb/esh": ">=0.4.2"
+    "@plotdb/esh": ">=0.5.0"
   }
 }

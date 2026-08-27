@@ -51,20 +51,11 @@ create = (bid, root, d) ->
     .then (cls) -> cls.create {root, data: d}
     .then (inst) -> inst.interface!
 
-# ── 檔案樹 ───────────────────────────────────────────────────────────
-# esh 的 remote io 目前只有 readFile / writeFile, 沒有 readdir —— 所以列目錄
-# 只能跑 `ls -R` 再解析 stdout。輸出是「相對於參數目錄的扁平路徑清單」,
-# 目錄與檔案混在一起, 所以這裡用「有沒有人以它為前綴」判斷是不是目錄
-# (空目錄會被誤判成檔案, 已接受;esh 補上 readdir 之後這段直接替換)。
-parse-tree = (stdout) ->
-  # 用原生方法 —— map / filter 這種裸函式是 prelude.ls 的, 頁面沒載會 ReferenceError
-  paths = stdout.split('\n').map((. trim!)).filter (p) -> p and p isnt '.'
-  dirs = {}
-  for p in paths
-    parts = p.split '/'
-    for i from 0 til parts.length - 1
-      dirs[parts.slice(0, i + 1).join '/'] = true
-  [{path: p, depth: p.split('/').length - 1, dir: !!dirs[p]} for p in paths.sort!]
+# ── 檔案樹 ──────────────────────────────────────────────────────────
+# esh 0.5.0 起有 io.readdir(path, {withFileTypes}) —— 回的是純 JSON 形狀
+# ({name, isDirectory}) 而不是 Dirent, 因為要跨 worker 的 postMessage。
+# 舊版用 `ls -R` 再解析 stdout, 得用「有沒有人以它為前綴」猜誰是目錄,
+# 空目錄會被誤判成檔案。現在不必猜了。
 
 # 一個檔案屬於哪個 block: blocks/<name>/... 的 <name>
 block-of = (path) -> path.split('/').0 or null
@@ -82,6 +73,26 @@ window.wagentRuntime
   .then (rt) ->
     current = null    # 目前預覽的 block 名字
     selected = null   # 樹上選取的檔案 (相對 blocks/)
+
+    # 遞迴列目錄, 回扁平的 [{path, depth, dir}] —— path 相對 blocks/。
+    # 目錄排前面、同類依名字, 這樣畫出來才像個樹而不是一堆亂序的列。
+    walk = (dir, prefix, depth) ->
+      rt.io.readdir dir, {withFileTypes: true}
+        .then (entries) ->
+          cmp = (a, b) ->
+            if a.isDirectory isnt b.isDirectory => return if a.isDirectory then -1 else 1
+            if a.name < b.name then -1 else 1
+          list = (entries or []).slice!.sort cmp
+          step = (acc, e) ->
+            acc.then (rows) ->
+              path = if prefix then "#{prefix}/#{e.name}" else e.name
+              rows.push {path, depth, dir: e.isDirectory}
+              if not e.isDirectory => return Promise.resolve rows
+              (walk "#{dir}/#{e.name}", path, depth + 1).then (sub) ->
+                [].push.apply rows, sub
+                rows
+          list.reduce step, Promise.resolve []
+        .catch -> []
 
     sandbox-opt =
       api: api
@@ -131,14 +142,14 @@ window.wagentRuntime
             do (p = row.path) -> el.addEventListener 'click', -> pick p
           tree-el.appendChild el
 
-      # ls -R 是非同步的, 而 promise 不保證按送出順序 resolve —— agent 連續寫檔時
+      # 列目錄是非同步的, 而 promise 不保證按送出順序 resolve —— agent 連續寫檔時
       # 兩次列目錄會同時在飛, 舊的那次後到就會把畫面蓋成舊的。用序號丟掉過期結果:
       # 失敗形式是「樹顯示的跟真相不一致, 而且看起來完全正常」, 這種最難發現。
       tree-seq = 0
       render-tree = ->
         seq = ++tree-seq
-        rt.sh.run "ls -R /home/workspace/#{block-dir}"
-          .then (r) -> render-rows parse-tree (r.stdout or '') if seq is tree-seq
+        walk block-dir, '', 0
+          .then (rows) -> render-rows rows if seq is tree-seq
           .catch -> render-rows [] if seq is tree-seq
 
       # **什麼時候重畫是應用決定的。** 來源不只 agent — 使用者的終端機、
@@ -193,9 +204,8 @@ window.wagentRuntime
 
         # 動態: 現在是什麼狀況。每輪取一次, 附在對話尾端。
         context: ->
-          rt.sh.run "ls -R /home/workspace/#{block-dir}"
-            .then (r) ->
-              rows = parse-tree (r.stdout or '')
+          walk block-dir, '', 0
+            .then (rows) ->
               openedBlock: current
               blocks: [r.path for r in rows when r.dir and r.depth is 0]
               files: [r.path for r in rows when not r.dir]
