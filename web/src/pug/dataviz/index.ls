@@ -39,7 +39,8 @@ Promise.all [window.wagentRuntime, window.dataviz]
 
     # devices: 把文件狀態以檔案形式給 agent — 它就能用 grep / wc / head 去查,
     # 不必為每種資料各開一個 tool。名單要在建 shell 前就定。
-    create-runtime {api, devices: <[sheet]>}
+    # root: 每個 sample 自己的 workspace, 不然三個 sample 會互相看到對方的 block
+    create-runtime {api, root: '/home/dataviz', devices: <[sheet]>}
       .then (rt) ->
         window.rt = rt
         dv.seed rt.io .catch (e) -> console.warn 'seed failed', e

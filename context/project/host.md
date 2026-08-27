@@ -42,6 +42,15 @@ append 不清空、readdir/stat、device 的值不落磁碟、指向 jail 外的
 **symlink 圍堵預設是開的** —— chroot 管不到真磁碟的 symlink,真 fs 解析會直接穿出去,
 所以那條線是 esh 在 fs 層另外擋的。要關得明講 `followSymlinks: true`。
 
+**workspace 放哪由應用層決定**:`createRuntime({root})`,省略就是 `/home/workspace`。
+同一個 origin 上的頁面共用同一份 OPFS,全都用預設值就會互相看到對方的檔案。
+注意這只換**虛擬路徑**;要連儲存本身都分開是 mounts 那一層的事
+(`{backend: 'opfs', path: 'x'}`,esh 0.5.1)。兩者獨立,而且**都不是安全邊界** ——
+同一個 origin、同一份配額。真正的圍堵是 agent 的 chroot。
+
+`root`(東西放哪)與 `agentRoot`(agent 看得到哪一段)是兩件事:後者預設等於前者,
+應用層可以再把它縮到單一 block 的目錄。
+
 同一份 host 定義前後端通用,差別只在 mount table。`@zenfs/core` 另有 `Fetch`(唯讀遠端)、`Port`(跨 worker)、`CoW` 等 backend 可用。
 
 **agent 與使用者的終端機用不同的 shell、同一份 fs**(esh 0.4.2 的 per-shell root):

@@ -34,9 +34,16 @@ block 拿到的是**值**不是路徑,所以換個環境、換份資料就能跑
 一台 server 上可以有好幾個應用,各有各的領域 prompt。`/api/agent`(另外兩個 sample 用的)
 沒有 purpose —— 那是純粹的 block 編輯環境。
 
-## 已知的坑
+## workspace 的隔離
 
-三個 sample 共用同一份 OPFS workspace:agent root 目前是 `tools.js` 裡的常數
-`/home/workspace`,device 也掛在 `${ROOT}/dev`,所以 `createRuntime({root})` 搬不動它。
-結果是 dataviz 的 block 清單會看到另外兩個 sample 留下的 block。要隔離得把 root
-一路打通到 worker 的 chroot 與 device 掛載點。
+三個 sample 在同一個 origin,共用同一份 OPFS。先前它們都用預設的 `/home/workspace`,
+於是 dataviz 的 block 清單會冒出另外兩個 sample 留下的 block。現在各自指定:
+
+    createRuntime({api, root: '/home/dataviz', devices: ['sheet']})
+
+`root` 省略就是 `/home/workspace`。注意這**只換虛擬路徑** —— `/home` 背後仍是同一份
+OPFS(只是各自佔一個子目錄)。要連儲存本身都分開,是 esh 的 mounts 那一層:
+
+    mounts: {'/home': {backend: 'opfs', path: 'dataviz'}}    // esh 0.5.1
+
+兩者獨立,可以只用其中一個。哪一個都不是**安全**邊界:同一個 origin、同一份配額。

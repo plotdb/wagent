@@ -2,6 +2,9 @@
 //  - shell:       路徑操作與探索。內容不走這裡 (會經 shell parser)
 //  - content ops: 內容讀寫, 含樂觀鎖。固定三個, 不隨 host 變動
 //  - host tools:  非檔案系統的操作。snapshot 為必要成員, 其餘由 host 自行註冊
+// workspace 的預設位置。應用層可以用 createRuntime({root}) 換掉 ——
+// 同一個 origin 上要並存好幾個互不干擾的 workspace 時會用到。
+// 這裡只是預設值, 真正生效的是 worker 收到的 workspace 參數。
 export const ROOT = '/home/workspace';
 
 export const shellTools = [

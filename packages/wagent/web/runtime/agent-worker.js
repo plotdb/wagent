@@ -20,6 +20,15 @@ const eshUrl = params.get('esh') || '/assets/lib/@plotdb/esh/main/esh.js';
 
 const esh = await import(eshUrl);
 
+// workspace 的位置。應用層可換 (createRuntime({root})), 省略就是 ROOT。
+// 為什麼要可換: 同一個 origin 上的每個頁面共用同一份 OPFS, 全都用同一個常數
+// 就會互相看到對方的檔案。換路徑是隔離的一半 —— 另一半是換掉 /home 背後的
+// 儲存 (esh 的 mounts, 見 host.md), 兩者獨立。
+//
+// 注意這與 agentRoot 是兩件事: workspace 是「東西放哪」, agentRoot 是
+// 「agent 看得到哪一段」(預設等於 workspace, 應用層可以再縮到單一 block)。
+const WORKSPACE = params.get('workspace') || ROOT;
+
 // ── device 檔案 ───────────────────────────────────────────────────────
 // 應用層的文件狀態 (試算表之類) 以檔案形式呈現, agent 就能用它已經會的
 // grep / wc / head 去查, 不必為每種資料再開一個 tool。
@@ -52,7 +61,7 @@ if(mountsParam) {
   catch(e) { console.warn('wagent: mounts 參數不是合法 JSON, 用預設值', e); }
 }
 // device 一定由這裡併入: 它必須落在 agent root 之內, 而且值的來源在主執行緒。
-if(deviceNames.length) { mounts[`${ROOT}/dev`] = {backend: 'device', files: deviceFiles()}; }
+if(deviceNames.length) { mounts[`${WORKSPACE}/dev`] = {backend: 'device', files: deviceFiles()}; }
 
 let persist = 'in-memory';
 let sh;
@@ -66,8 +75,8 @@ try {
 
 // workspace 的初始內容由**應用層**植入 (見 packages/dataviz/web/seed.js):
 // 種什麼範例、要不要種, 都是領域決定 — 一個拿 wagent 做遊戲的人不需要長條圖。
-await sh.run(`mkdir -p ${ROOT}`);
-await sh.run(`cd ${ROOT}`);
+await sh.run(`mkdir -p ${WORKSPACE}`);
+await sh.run(`cd ${WORKSPACE}`);
 
 // ── fs 變更事件 ───────────────────────────────────────────────────────
 // 包在 shell 物件上, 而不是包在 tool 層 — 因為 agent 的 tool 與使用者的終端機
@@ -124,12 +133,12 @@ function watchFs(target, getPrefix) {
 // 預設 root 是 workspace。要縮到單一 block 目錄的話由應用層指定 —
 // 但注意那會讓 agent 無法建立新 block, 也看不到掛在 workspace 層的 device,
 // 所以那是「應用決定編輯對象」的嵌入情境才適用 (composer / makechart)。
-let agentRoot = params.get('root') || ROOT;
+let agentRoot = params.get('agentRoot') || WORKSPACE;
 const shAgent = await esh.createShell({root: agentRoot});   // 不帶 mounts = 沿用已掛好的 fs
 watchFs(sh, null);                                        // 終端機與主執行緒
 watchFs(shAgent, function() { return normPrefix(agentRoot); });   // agent (root 可能被 chroot 換掉)
 
-esh.serveShell(sh, self, {persist: persist, root: ROOT});
+esh.serveShell(sh, self, {persist: persist, root: WORKSPACE});
 
 // ── chat 層 ───────────────────────────────────────────────────────────
 const post = function(o) { self.postMessage(o); };
@@ -330,4 +339,4 @@ self.addEventListener('message', function(ev) {
   });
 });
 
-post({type: 'agent-ready', persist: persist, root: ROOT});
+post({type: 'agent-ready', persist: persist, root: WORKSPACE});

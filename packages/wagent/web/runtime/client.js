@@ -5,6 +5,8 @@ const DEFAULTS = {
   worker: '/assets/lib/@plotdb/wagent/main/runtime/agent-worker.js',
   esh: '/assets/lib/@plotdb/esh/main/esh.js',
   eshRemote: '/assets/lib/@plotdb/esh/main/src/remote.js',
+  // workspace 的位置。同一個 origin 上要並存好幾個互不干擾的 workspace 就換掉它 ——
+  // 但注意這只換虛擬路徑, /home 背後仍是同一份 OPFS (要換儲存本身見 mounts)。
   root: '/home/workspace'
 };
 
@@ -20,10 +22,14 @@ export function createRuntime(opt) {
   // 所以要用 zenfs 的自訂 backend 物件得改在 worker 端註冊, 不能從這裡塞。
   // device mount 由 worker 自己併入 (它必須落在 agent root 之內, 順序不能反)。
   const mounts = o.mounts ? JSON.stringify(o.mounts) : '';
+  // root 一定要傳過去。先前只有 client 這端用它做 abs(), worker 那邊還是常數 —
+  // 設了 root 的話 io 讀寫一個路徑、agent 與 device 在另一個路徑, 而且不會報錯。
+  // (參數名跟 agentRoot 分開: 一個是「東西放哪」, 一個是「agent 看得到哪一段」。)
   const url = `${o.worker}?api=${encodeURIComponent(o.api)}&esh=${encodeURIComponent(o.esh)}` +
+    `&workspace=${encodeURIComponent(o.root)}` +
     (devices ? `&devices=${encodeURIComponent(devices)}` : '') +
     (mounts ? `&mounts=${encodeURIComponent(mounts)}` : '') +
-    (o.agentRoot ? `&root=${encodeURIComponent(o.agentRoot)}` : '');
+    (o.agentRoot ? `&agentRoot=${encodeURIComponent(o.agentRoot)}` : '');
   const worker = new Worker(url, {type: 'module'});
   const prefix = `c${Math.random().toString(36).slice(2, 8)}-`;
   let seq = 0;
