@@ -39,8 +39,21 @@ Promise.all [window.wagentRuntime, window.dataviz]
 
     # devices: 把文件狀態以檔案形式給 agent — 它就能用 grep / wc / head 去查,
     # 不必為每種資料各開一個 tool。名單要在建 shell 前就定。
-    # root: 每個 sample 自己的 workspace, 不然三個 sample 會互相看到對方的 block
-    create-runtime {api, root: '/home/dataviz', devices: <[sheet]>}
+    # 隔離有**兩層, 互相獨立**, 這個 sample 兩層都用著 —— 不是因為需要,
+    # 是因為疊起來的行為要有人一直踩著, 不然哪天壞了沒人知道:
+    #   mounts.path  換掉 /home 背後的儲存 (OPFS 的哪個子目錄)
+    #   root         換掉 workspace 的虛擬路徑 (agent 看到的世界)
+    # 於是實體位置是 OPFS:/dataviz/dataviz/。另外兩個 sample 只用第一層。
+    # 選項先組成物件再傳。寫成 `create-runtime do` + 縮排屬性的話, 後面同一層的
+    # `.then` 會被吃進最後一個屬性裡 (devices: ['sheet'].then(...)), 編譯得過、
+    # 執行才炸 —— LiveScript 的 do-block 沒有結束標記, 只能靠縮排。
+    rt-opt =
+      api: api
+      mounts: {'/home': {backend: 'opfs', path: 'dataviz'}}
+      root: '/home/dataviz'
+      devices: <[sheet]>
+
+    create-runtime rt-opt
       .then (rt) ->
         window.rt = rt
         dv.seed rt.io .catch (e) -> console.warn 'seed failed', e

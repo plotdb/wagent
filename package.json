@@ -16,7 +16,7 @@
   "dependencies": {
     "@plotdb/block": "^5.7.3",
     "@plotdb/csscope": "^5.0.4",
-    "@plotdb/esh": "^0.5.0",
+    "@plotdb/esh": "^0.5.1",
     "@plotdb/rescope": "^5.0.17",
     "@plotdb/semver": "^0.0.4",
     "@plotdb/sheet": "^0.7.1",

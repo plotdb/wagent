@@ -69,10 +69,11 @@ create = (bid, root, d) ->
     .then (inst) -> inst.interface!
 
 window.wagent-runtime
-  # 每個 sample 自己的 workspace。同一個 origin 共用一份 OPFS, 不分開的話
-  # 三個 sample 會互相看到對方的檔案 (dataviz 的 block 清單會冒出別人的 block)。
-  # 省略 root 就是預設的 /home/workspace。
-  .then ({create-runtime}) -> create-runtime {api, root: '/home/single-block'}
+  # 每個 sample 自己的儲存。同一個 origin 共用一份 OPFS, 不分開的話三個 sample
+  # 會互相看到對方的檔案 (dataviz 的 block 清單會冒出別人的 block)。
+  # path 省略就是 origin root — 也就是舊行為。需 esh 0.5.1。
+  .then ({create-runtime}) ->
+    create-runtime {api, mounts: {'/home': {backend: 'opfs', path: 'single-block'}}}
   .then (rt) ->
     window.rt = rt   # 方便在 console 觀察 (rt.sh.run / rt.io)
     # 空的 workspace 才種 —— 使用者既有的東西不能蓋

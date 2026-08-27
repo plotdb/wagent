@@ -61,8 +61,9 @@ create = (bid, root, d) ->
 block-of = (path) -> path.split('/').0 or null
 
 window.wagentRuntime
-  # 每個 sample 自己的 workspace — 理由見 single-block 的同一處
-  .then ({create-runtime}) -> create-runtime {api, root: '/home/multiple-blocks'}
+  # 每個 sample 自己的儲存 — 理由見 single-block 的同一處
+  .then ({create-runtime}) ->
+    create-runtime {api, mounts: {'/home': {backend: 'opfs', path: 'multiple-blocks'}}}
   .then (rt) ->
     window.rt = rt
     # 空的 workspace 才種 —— 使用者既有的東西不能蓋

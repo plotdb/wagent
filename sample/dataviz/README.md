@@ -36,14 +36,13 @@ block 拿到的是**值**不是路徑,所以換個環境、換份資料就能跑
 
 ## workspace 的隔離
 
-三個 sample 在同一個 origin,共用同一份 OPFS。先前它們都用預設的 `/home/workspace`,
-於是 dataviz 的 block 清單會冒出另外兩個 sample 留下的 block。現在各自指定:
+三個 sample 在同一個 origin,共用同一份 OPFS。隔離有**兩層,互相獨立**:
 
-    createRuntime({api, root: '/home/dataviz', devices: ['sheet']})
+    mounts: {'/home': {backend: 'opfs', path: 'dataviz'}}   換儲存 (OPFS 的哪個子目錄)
+    root:   '/home/dataviz'                                  換虛擬路徑 (agent 看到的世界)
 
-`root` 省略就是 `/home/workspace`。注意這**只換虛擬路徑** —— `/home` 背後仍是同一份
-OPFS(只是各自佔一個子目錄)。要連儲存本身都分開,是 esh 的 mounts 那一層:
+另外兩個 sample 只用第一層。這個兩層都用 —— 不是因為需要,是因為疊起來的行為要有人
+一直踩著,不然哪天壞了沒人知道。於是實體位置是 `OPFS:/dataviz/dataviz/`。
 
-    mounts: {'/home': {backend: 'opfs', path: 'dataviz'}}    // esh 0.5.1
-
-兩者獨立,可以只用其中一個。哪一個都不是**安全**邊界:同一個 origin、同一份配額。
+兩者省略時都是原行為(`path` 省略 = origin root,`root` 省略 = `/home/workspace`)。
+哪一層都**不是安全邊界**:同一個 origin、同一份配額。真正的圍堵是 agent 的 chroot。

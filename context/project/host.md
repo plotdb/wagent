@@ -42,11 +42,22 @@ append 不清空、readdir/stat、device 的值不落磁碟、指向 jail 外的
 **symlink 圍堵預設是開的** —— chroot 管不到真磁碟的 symlink,真 fs 解析會直接穿出去,
 所以那條線是 esh 在 fs 層另外擋的。要關得明講 `followSymlinks: true`。
 
-**workspace 放哪由應用層決定**:`createRuntime({root})`,省略就是 `/home/workspace`。
-同一個 origin 上的頁面共用同一份 OPFS,全都用預設值就會互相看到對方的檔案。
-注意這只換**虛擬路徑**;要連儲存本身都分開是 mounts 那一層的事
-(`{backend: 'opfs', path: 'x'}`,esh 0.5.1)。兩者獨立,而且**都不是安全邊界** ——
-同一個 origin、同一份配額。真正的圍堵是 agent 的 chroot。
+**隔離有兩層,互相獨立,可以只用一層也可以疊起來:**
+
+    mounts: {'/home': {backend: 'opfs', path: 'dataviz'}}   換掉 /home 背後的儲存
+    root:   '/home/dataviz'                                  換掉 workspace 的虛擬路徑
+
+同一個 origin 上的頁面共用同一份 OPFS,兩層都不用就會互相看到對方的檔案。
+`path` 需 esh 0.5.1(可多層,逐段建);`root` 省略就是 `/home/workspace`。
+本 repo 的 sample:另外兩個只用儲存層,dataviz 兩層都用 —— 疊起來的行為要有人
+一直踩著,實體位置因此是 `OPFS:/dataviz/dataviz/`。
+
+**兩者都不是安全邊界** —— 同一個 origin、同一份配額,頁面上的 JS 隨時能繞過去。
+真正的圍堵是 agent 的 chroot。
+
+> 換了隔離方式之後,舊位置的東西會**留在原地變成孤兒**(不會被刪,也不會自動搬)。
+> 更麻煩的是換 `mounts.path` 時:原本 `/home/x/` 底下的東西會浮成 `/home/` 底下 ——
+> 因為 `/home` 指到的子目錄變了。看起來像檔案自己跑掉了,其實是掛載點換了。
 
 `root`(東西放哪)與 `agentRoot`(agent 看得到哪一段)是兩件事:後者預設等於前者,
 應用層可以再把它縮到單一 block 的目錄。
