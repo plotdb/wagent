@@ -1,5 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {pruneContext, userContent} from '../turn-context.js';
+import {pruneContext, userContent, wrapNudge} from '../turn-context.js';
 
 // tool 結果可以是字串, 或 {text, image: {mediaType, data}} — anthropic 的 tool_result
 // content 支援 block 陣列, 圖可以直接放進去
@@ -129,6 +129,10 @@ export function createSession({system, tools, runTool, api, model}) {
         history.push({role: 'assistant', content: response.content});
         if(response.stop_reason === 'tool_use') {
           return runBlocks(response.content, 0, []).then(function(results) {
+            // 使用者執行中插的話: 只能接在 tool_result 之後 — 這則 user message
+            // 已經含齊本輪所有 tool_result, 配對是完整的, 補一段 text 安全。
+            const extra = cb && cb.nudge ? cb.nudge() : null;
+            if(extra && extra.length) { results.push({type: 'text', text: wrapNudge(extra)}); }
             history.push({role: 'user', content: results});
             pruneImages(history);
             return step();

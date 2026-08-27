@@ -22,6 +22,7 @@
         this.maxFix = d.maxFix || 2;
         this.fixCount = 0;
         this.wrote = false;      // 這一輪 agent 有沒有寫過檔 (自動修正的 safe guard)
+        this.busy = false;       // 正在跑 — 決定發話要開新的一輪還是插隊
         this.handlers = {};
       },
       interface: function() {
@@ -47,12 +48,31 @@
             return self.itf;
           },
           block: function() { return self.blockName; },
+          // 正在跑嗎 — 畫面靠它決定發話會不會變成排隊
+          busy: function() { return self.busy; },
+          // 自動修正的開關。預設開 = 出錯就讓 agent 自己修; 關 = 只提議,
+          // 使用者按了才送。這決定「什麼時候花錢、什麼時候讓 agent 動手」,
+          // 所以是使用者的選擇, 不是我們的預設值。
+          autoFix: function(v) {
+            if(v === undefined) { return self.autoFix; }
+            self.autoFix = !!v;
+            emit('auto-fix', self.autoFix);
+            return self.autoFix;
+          },
           setBlock: function(name) {
             self.blockName = name;
             emit('block', name);
           },
+          // 正在跑的時候發話不開新的一輪, 排進 queue 讓當下這一輪帶走。
+          // 判斷放這裡而不是丟給 UI: 「現在是不是在跑」是對話層的事實。
           send: function(text, o) {
+            if(self.busy) {
+              self.transport && self.transport.nudge(text);
+              emit('queued', text);
+              return Promise.resolve({queued: true});
+            }
             if(!(o && o.auto)) { self.fixCount = 0; self.wrote = false; }  // 用戶手動發話, 歸零
+            self.busy = true;
             emit('busy', true);
             // agent loop 在本機 worker; transport 由 runtime 注入 (createRuntime().transport)
             if(!self.transport) {
@@ -68,14 +88,18 @@
                   if(ev.phase !== 'end') { return emit('tool', ev); }
                   noteWrite(ev);
                   if(ev.error) { emit('tool', ev); }
-                }
+                },
+                // 排隊的訊息真的送進去了 — 讓畫面把「排隊中」改掉
+                onNudge: function(texts) { emit('nudge-taken', texts); }
               })
                 .then(function(j) {
+                  self.busy = false;
                   emit('reply', j.reply || '');
                   emit('busy', false);
                   return j;
                 })
                 .catch(function(e) {
+                  self.busy = false;
                   emit('busy', false);
                   emit('error', e);
                   throw e;
@@ -95,20 +119,31 @@
             if(name === self.blockName) { self.fixCount = 0; }
           });
           this.sandbox.on('render-error', function(o) {
-            // 只修 agent 這一輪真的寫過、而且是目前編輯對象的 block —
-            // 否則使用者打開一個本來就壞掉的 block, agent 會自作主張去改它
-            if(!self.autoFix || !self.wrote || o.name !== self.blockName) { return; }
-            if(self.fixCount >= self.maxFix) {
-              emit('info', '自動修正已達 ' + self.maxFix + ' 次上限,請手動處理: ' + o.message);
+            // 只碰 agent 這一輪真的寫過、而且是目前編輯對象的 block —
+            // 否則使用者打開一個本來就壞掉的 block, agent 會自作主張去改它。
+            // 這是 safe guard 不是偏好設定, 所以不受 autoFix 開關影響。
+            if(!self.wrote || o.name !== self.blockName) { return; }
+            var fix = function() {
+              self.fixCount++;
+              return self.itf.send(
+                '前端渲染 block「' + o.name + '」時發生錯誤:\n' + o.message +
+                '\n請 read_file 檢查並修正這個 block。',
+                {auto: true}
+              ).catch(function() {});
+            };
+            // 提議而不是逕自去修: 開關關著, 或自動修正已經試到上限。
+            // 兩種情況都給使用者同一個出口 — 一顆按鈕, 按了才送。
+            if(!self.autoFix || self.fixCount >= self.maxFix) {
+              emit('fix-offer', {
+                name: o.name,
+                message: o.message,
+                reason: self.autoFix ? 'limit' : 'off',
+                fix: fix
+              });
               return;
             }
-            self.fixCount++;
-            emit('info', '渲染錯誤,嘗試自動修正 (' + self.fixCount + '/' + self.maxFix + ')');
-            self.itf.send(
-              '前端渲染 block「' + o.name + '」時發生錯誤:\n' + o.message +
-              '\n請 read_file 檢查並修正這個 block。',
-              {auto: true}
-            ).catch(function() {});
+            emit('info', '渲染錯誤,嘗試自動修正 (' + (self.fixCount + 1) + '/' + self.maxFix + ')');
+            fix();
           });
         }
         return this.itf;

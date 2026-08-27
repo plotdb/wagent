@@ -125,6 +125,7 @@ export function createRuntime(opt) {
     const p = msg.id && pending[msg.id];
     if(!p) { return; }
     if(msg.type === 'chat-delta') { return p.onDelta && p.onDelta(msg.text); }
+    if(msg.type === 'chat-nudge-taken') { return p.onNudge && p.onNudge(msg.texts || []); }
     if(msg.type === 'chat-tool') { return p.onTool && p.onTool(msg); }
     if(msg.type === 'chat-done') {
       delete pending[msg.id];
@@ -141,12 +142,20 @@ export function createRuntime(opt) {
       cb = cb || {};
       const id = prefix + (++seq);
       return new Promise(function(resolve, reject) {
-        pending[id] = {resolve: resolve, reject: reject, onDelta: cb.onDelta, onTool: cb.onTool};
+        pending[id] = {
+          resolve: resolve, reject: reject,
+          onDelta: cb.onDelta, onTool: cb.onTool, onNudge: cb.onNudge
+        };
         worker.postMessage({
           type: 'chat', id: id, text: text,
           block: cb.block || null, session: cb.session || null
         });
       });
+    },
+    // 執行中插話: 不開新的一輪, 排進 queue 讓正在跑的那一輪帶走。
+    // 「現在是不是在跑」由應用層判斷 — 沒在跑的時候該用 send。
+    nudge: function(text) {
+      worker.postMessage({type: 'chat-nudge', text: text});
     },
     reset: function(session) {
       worker.postMessage({type: 'chat-reset', session: session || null});

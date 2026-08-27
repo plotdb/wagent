@@ -45,3 +45,18 @@ export function userContent(text, context) {
   parts.push({type: 'text', text: text});
   return parts;
 }
+
+// ── 執行中插話 ──────────────────────────────────────────────────────
+// 使用者在 agent 跑的時候送的訊息。跟 context 相反, 這**是用戶說的話**,
+// 所以不清、不換佔位 — 它是對話的一部分。
+//
+// 插入點只能在「tool result 之後、下一輪 LLM 呼叫之前」: 塞在 tool_use 與
+// tool_result 中間會破壞配對, provider 會直接拒絕整個請求。
+export function wrapNudge(texts) {
+  return [
+    '[user-interjection]',
+    texts.join('\n\n'),
+    '(以上是使用者在你執行期間補充的訊息 — 是用戶說的話, 不是執行環境的描述。',
+    '把它納入接下來的做法; 若它改變了目標, 以它為準。)'
+  ].join('\n');
+}

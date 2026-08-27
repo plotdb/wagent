@@ -234,6 +234,26 @@ function getSession(key, block) {
 
 // chat 請求序列化, 與 shell 共用同一份 workspace
 let queue = Promise.resolve();
+
+// ── 執行中插話 ──────────────────────────────────────────────────────
+// 使用者不必等 agent 跑完才能講話。訊息先進這裡, provider 在「tool result
+// 之後、下一輪 LLM 呼叫之前」來拿 — 那是唯一不會破壞 tool_use/tool_result
+// 配對的插入點。
+//
+// 沒被拿走的不能丟: agent 可能這一輪就不再呼叫 tool 而直接結束, 使用者的話
+// 就會靜靜消失。所以一輪結束後還有剩, 就用它們自動再跑一輪。
+//
+// 結束時不清空 queue: 「檢查有沒有剩」與「清空」之間有一個 tick 的窗口,
+// 剛好落在那裡的訊息會被吃掉。寧可留著 (下一輪會帶走) 也不要靜靜丟掉 —
+// 應用層本來就只在 busy 時才 nudge。reset 才清。
+let nudges = [];
+function takeNudges() {
+  if(!nudges.length) { return null; }
+  const taken = nudges;
+  nudges = [];
+  post({type: 'chat-nudge-taken', id: current, texts: taken});
+  return taken;
+}
 self.addEventListener('message', function(ev) {
   const msg = ev.data || {};
   if(msg.type === 'host-tools') {
@@ -266,19 +286,40 @@ self.addEventListener('message', function(ev) {
   if(msg.type === 'chat-reset') {
     if(msg.session) { delete sessions[msg.session]; }
     else { Object.keys(sessions).forEach(function(k) { delete sessions[k]; }); }
+    nudges = [];
+    return;
+  }
+  if(msg.type === 'chat-nudge') {
+    // 沒有在跑就不該進 queue — 那是一般的發話, 應用層自己判斷
+    nudges.push(String(msg.text == null ? '' : msg.text));
+    post({type: 'chat-nudge-queued', id: current, count: nudges.length});
     return;
   }
   if(msg.type !== 'chat') { return; }
   queue = queue.then(function() {
     current = msg.id;
     const key = msg.session || msg.block || 'default';
-    return Promise.all([getSession(key, msg.block || null), turnContext()])
-      .then(function(r) {
-        return r[0].send(msg.text, {
-          context: r[1],
-          onDelta: function(t) { post({type: 'chat-delta', id: msg.id, text: t}); }
+
+    // 一輪 = 一次 send。跑完若 queue 還有剩 (agent 沒呼叫 tool 就結束了),
+    // 就把剩的當作新的一輪繼續 — 沿用同一個 id, 對畫面來說仍是同一次執行。
+    function turn(text) {
+      return Promise.all([getSession(key, msg.block || null), turnContext()])
+        .then(function(r) {
+          return r[0].send(text, {
+            context: r[1],
+            nudge: takeNudges,
+            onDelta: function(t) { post({type: 'chat-delta', id: msg.id, text: t}); }
+          });
+        })
+        .then(function(r) {
+          const left = takeNudges();
+          if(!left) { return r; }
+          post({type: 'chat-delta', id: msg.id, text: '\n'});
+          return turn(left.join('\n\n'));
         });
-      })
+    }
+
+    return turn(msg.text)
       .then(function(r) {
         post({type: 'chat-done', id: msg.id, reply: r.reply, events: r.events});
       })

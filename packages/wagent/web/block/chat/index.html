@@ -1,5 +1,13 @@
 <div>
-  <div class="rc-chat-header"><span class="rc-chat-title"></span><span class="rc-chat-provider"></span></div>
+  <div class="rc-chat-header">
+    <span class="rc-chat-title"></span>
+    <span class="rc-chat-meta">
+      <label class="rc-chat-autofix" title="關掉的話, 渲染出錯時只會提議, 按了才送給 agent">
+        <input type="checkbox" checked><span>出錯自動修</span>
+      </label>
+      <span class="rc-chat-provider"></span>
+    </span>
+  </div>
   <div class="rc-chat-log"></div>
   <div class="rc-chat-input">
     <textarea placeholder="輸入訊息,Enter 送出,Shift+Enter 換行"></textarea>
@@ -10,6 +18,9 @@
     :scope { display: flex; flex-direction: column; height: 100%; }
     .rc-chat-header { padding: 12px 16px; border-bottom: 1px solid #eee; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
     .rc-chat-title { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rc-chat-meta { display: flex; align-items: center; gap: 10px; }
+    .rc-chat-autofix { font-size: 11px; color: #888; white-space: nowrap; display: flex; align-items: center; gap: 3px; cursor: pointer; user-select: none; }
+    .rc-chat-autofix input { margin: 0; cursor: pointer; }
     .rc-chat-provider { font-size: 11px; color: #999; white-space: nowrap; }
     .rc-chat-log { flex: 1; overflow-y: auto; padding: 12px; }
     .rc-msg { margin-bottom: 10px; max-width: 92%; padding: 8px 12px; border-radius: 10px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
@@ -17,6 +28,11 @@
     .rc-msg.assistant { background: #f0f0ec; color: #222; }
     .rc-msg.event { background: transparent; color: #888; font-size: 12px; padding: 2px 6px; font-family: Menlo, monospace; }
     .rc-msg.error { background: #fdecea; color: #b3261e; }
+    /* 排隊中的發話: 已經收下但還沒送進 agent, 用虛線邊框跟已送出的區分 */
+    .rc-msg.user.queued { background: transparent; color: #2b6cb0; border: 1px dashed #9dbde0; }
+    .rc-msg.offer { background: #fdecea; color: #b3261e; }
+    .rc-msg.offer button { margin-top: 6px; display: block; padding: 4px 12px; border: 0; border-radius: 5px; background: #b3261e; color: #fff; cursor: pointer; font-size: 12px; }
+    .rc-msg.offer button:disabled { background: #d8a5a0; cursor: default; }
     .rc-chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid #eee; }
     .rc-chat-input textarea { flex: 1; resize: none; height: 60px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13.5px; font-family: inherit; }
     .rc-chat-input button { padding: 0 18px; border: 0; border-radius: 6px; background: #2b6cb0; color: #fff; cursor: pointer; font-size: 14px; }
@@ -41,7 +57,9 @@
         var btn = root.querySelector('button');
         var title = root.querySelector('.rc-chat-title');
         var providerEl = root.querySelector('.rc-chat-provider');
+        var autoFixEl = root.querySelector('.rc-chat-autofix input');
         var thinking = null;
+        var queued = [];   // 已經收下、還沒送進 agent 的發話 (畫面上的節點)
 
         function addMsg(cls, text) {
           var d = document.createElement('div');
@@ -86,17 +104,53 @@
         });
         base.on('info', function(t) { addMsg('event', t); });
         base.on('block', function(name) { title.textContent = name; });
+        // 執行中也能發話 (會排隊), 所以按鈕不 disable, 只換字提示會進 queue
         base.on('busy', function(b) {
-          btn.disabled = b;
+          btn.textContent = b ? '排隊送出' : '送出';
           if(b) { thinking = addMsg('event', '思考中…'); }
           else if(thinking) { thinking.remove(); thinking = null; }
+        });
+        base.on('queued', function(text) {
+          var el = addMsg('user queued', text);
+          el.title = '等 agent 做完手上的事就送進去';
+          queued.push(el);
+          working();
+        });
+        // 真的送進去了 — 拿掉「排隊中」的樣式。數量對得上就一則一則拿掉,
+        // 對不上 (理論上不會) 就全部清掉, 寧可少一個標記也不要留假的。
+        base.on('nudge-taken', function(texts) {
+          var n = (texts || []).length;
+          var take = n && n <= queued.length ? queued.splice(0, n) : queued.splice(0);
+          take.forEach(function(el) {
+            el.classList.remove('queued');
+            el.title = '';
+          });
+        });
+
+        // 出錯時的提議: 開關關著、或自動修正試到上限, 就給一顆按鈕
+        base.on('fix-offer', function(o) {
+          var d = addMsg('offer', (o.reason === 'limit'
+            ? '自動修正已達上限,仍然渲染失敗:\n'
+            : '渲染失敗:\n') + o.message);
+          var b = document.createElement('button');
+          b.textContent = '請 agent 修正';
+          b.onclick = function() {
+            b.disabled = true;
+            b.textContent = '已送出';
+            addMsg('event', '已把錯誤送給 agent');
+            o.fix();
+          };
+          d.appendChild(b);
+          log.scrollTop = log.scrollHeight;
         });
 
         function send() {
           var text = input.value.trim();
-          if(!text || btn.disabled) { return; }
+          if(!text) { return; }
           input.value = '';
-          addMsg('user', text);
+          // 執行中的話 base.send 會轉成排隊, 並發 'queued' — 那則訊息由該
+          // handler 畫, 這裡不能先畫, 否則同一句會出現兩次。
+          if(!base.busy()) { addMsg('user', text); }
           base.send(text).catch(function() {});  // 錯誤已由 error handler 顯示
         }
         btn.onclick = send;
@@ -108,6 +162,11 @@
         addMsg('assistant', base.block()
           ? '正在編輯「' + base.block() + '」。告訴我你要怎麼修改。'
           : '描述你想要的 block,我會建立一個新的。例如:「用 sales 資料畫營收折線圖」。');
+        autoFixEl.checked = base.autoFix();
+        autoFixEl.addEventListener('change', function() {
+          base.autoFix(autoFixEl.checked);
+          addMsg('event', autoFixEl.checked ? '出錯時會自動請 agent 修' : '出錯時只會提議,按了才送');
+        });
         base.provider().then(function(j) {
           providerEl.textContent = j.provider ? j.provider + ' / ' + j.model : '未設定 API key (.env)';
         });

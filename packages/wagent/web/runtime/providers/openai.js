@@ -1,5 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {pruneContext, userContent} from '../turn-context.js';
+import {pruneContext, userContent, wrapNudge} from '../turn-context.js';
 
 // browser 版 provider: 打後端 llm proxy (原生 wire format), 自行跑 tool loop。
 // 介面同後端 providers/*: createSession({system, tools, runTool}) -> {send(text, cb), reset()}
@@ -109,11 +109,21 @@ export function createSession({system, tools, runTool, api, model}) {
       images.length = 0;
     }
 
+    // 使用者執行中插的話。openai 的 tool 結果是獨立的 role:'tool' 訊息, 所以
+    // 補一則 user message 即可 — 但必須等所有 tool_call 都有對應的 tool 訊息,
+    // 少一個 provider 就整包拒絕。
+    function flushNudges() {
+      const extra = cb && cb.nudge ? cb.nudge() : null;
+      if(extra && extra.length) {
+        history.push({role: 'user', content: [{type: 'text', text: wrapNudge(extra)}]});
+      }
+    }
+
     const step = function() {
       return createMessage(cb).then(function(msg) {
         history.push(msg);
         if(msg.tool_calls && msg.tool_calls.length) {
-          return runCalls(msg.tool_calls, 0).then(flushImages).then(step);
+          return runCalls(msg.tool_calls, 0).then(flushImages).then(flushNudges).then(step);
         }
         return {reply: msg.content || '', events: events};
       });
