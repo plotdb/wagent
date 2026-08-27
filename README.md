@@ -13,7 +13,8 @@ and — this is the part that matters — can see what it renders.
 
     npm install
     echo "ANTHROPIC_API_KEY=sk-..." > .env    # or OPENAI_API_KEY
-    npm start                                 # http://localhost:3000
+    npm start                                 # prints the URL — the port is random
+                                              # (PORT=4000 npm start to pin it)
 
 Two samples, differing **only in topology** — wagent knows neither:
 

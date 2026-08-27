@@ -26,8 +26,12 @@ app.use('/api/agent', require('@plotdb/wagent')({
 
 app.use('/', express.static('web/static'));
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  require('./lib/log')('server', `listening on ${port}`);
+// port 不寫死 —— 0 讓 OS 給一個沒人用的 port (同 @zbryikt/template 的作法:
+// listen 之後從 server.address() 問實際的 port, 而不是印我們自己以為的那個)。
+// 3000 這種常見的預設值在同時開好幾個專案時必然撞。要固定就給 PORT=xxxx。
+const port = process.env.PORT || 0;
+const server = app.listen(port, () => {
+  const p = server.address().port;
+  require('./lib/log')('server', `listening on http://localhost:${p}`);
   srcbuild.lsp({base: 'web'});
 });
