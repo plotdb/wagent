@@ -16,6 +16,11 @@ import {createSession as createAnthropic} from './providers/anthropic.js';
 const params = new URL(self.location.href).searchParams;
 const api = params.get('api') || '/api/agent';
 const eshUrl = params.get('esh') || '/assets/lib/@plotdb/esh/main/esh.js';
+// 打到 api 的額外 header ( CSRF / bearer 之類 )。可變 —— token 會過期,
+// 主執行緒用 setHeaders 換新的; provider 拿的是 getter 而不是當下的值。
+let apiHeaders = {};
+try { apiHeaders = JSON.parse(params.get('headers') || '{}') || {}; } catch(e) { apiHeaders = {}; }
+const getHeaders = function() { return apiHeaders; };
 
 
 const esh = await import(eshUrl);
@@ -235,7 +240,7 @@ function getSession(key, block) {
     };
     sessions[key] = create({
       system: system, tools: tools.concat(hostTools), runTool: runTool,
-      api: api, model: inf.model
+      api: api, model: inf.model, headers: getHeaders
     });
     return sessions[key];
   });
@@ -278,6 +283,11 @@ self.addEventListener('message', function(ev) {
   }
   if(msg.type === 'device-set') {
     if(deviceNames.indexOf(msg.name) >= 0) { deviceValues[msg.name] = String(msg.value == null ? '' : msg.value); }
+    return;
+  }
+  if(msg.type === 'headers-set') {
+    // 整份換掉而不是 merge: 呼叫端才知道哪些還有效, 留著舊的等於送過期的 token
+    apiHeaders = (msg.headers && typeof msg.headers === 'object') ? msg.headers : {};
     return;
   }
   if(msg.type === 'host-info') {

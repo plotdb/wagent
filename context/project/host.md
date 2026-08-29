@@ -17,6 +17,17 @@ wagent 從「對話產生圖表」升級為**編輯宿主(host)**:提供一個�
 
 三者都在瀏覽器的同一個 worker / 主執行緒內(見 `logs/20260810-browser-runtime.md`),後端只剩 LLM proxy。
 
+**嵌進既有站台時,打到 api 的請求常常需要額外 header** —— CSRF token、bearer 之類:
+那些站台的 api 前面就擋著這類檢查,而 llm proxy 是 POST,逃不掉。
+`createRuntime({headers})` 會把它們帶到 provider 的請求上;token 會過期
+(session 重生、CSRF 換一輪),所以另外有 `rt.setHeaders(h)` 可以整份換掉 ——
+只在建 runtime 時給一次是不夠的。
+
+> `worker` / `esh` 這些 URL 若已經帶了 query(對資產加版本的站台就會 —— 沒有
+> cachestamp 的話改了 wagent 卻載到舊的,而且完全沒有跡象),client 會用 `&` 接。
+> 但注意 worker 的**靜態 import**(`./providers/*.js`)不會跟著帶版本,
+> 開發時要嘛讓那個目錄不要被瀏覽器快取,要嘛清快取。
+
 
 ## Host 介面契約
 

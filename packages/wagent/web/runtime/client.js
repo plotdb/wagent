@@ -7,7 +7,11 @@ const DEFAULTS = {
   eshRemote: '/assets/lib/@plotdb/esh/main/src/remote.js',
   // workspace 的位置。同一個 origin 上要並存好幾個互不干擾的 workspace 就換掉它 ——
   // 但注意這只換虛擬路徑, /home 背後仍是同一份 OPFS (要換儲存本身見 mounts)。
-  root: '/home/workspace'
+  root: '/home/workspace',
+  // 打到 api 的請求要附的額外 header。嵌進既有站台時常常是必要的 ——
+  // 例如 CSRF token 或 bearer: 那些站台的 api 前面就擋著這類檢查, 而 llm proxy
+  // 是 POST, 逃不掉。預設空的, 純 wagent 的 sample 不需要。
+  headers: null
 };
 
 export function createRuntime(opt) {
@@ -22,13 +26,20 @@ export function createRuntime(opt) {
   // 所以要用 zenfs 的自訂 backend 物件得改在 worker 端註冊, 不能從這裡塞。
   // device mount 由 worker 自己併入 (它必須落在 agent root 之內, 順序不能反)。
   const mounts = o.mounts ? JSON.stringify(o.mounts) : '';
+  const headers = o.headers ? JSON.stringify(o.headers) : '';
   // root 一定要傳過去。先前只有 client 這端用它做 abs(), worker 那邊還是常數 —
   // 設了 root 的話 io 讀寫一個路徑、agent 與 device 在另一個路徑, 而且不會報錯。
   // (參數名跟 agentRoot 分開: 一個是「東西放哪」, 一個是「agent 看得到哪一段」。)
-  const url = `${o.worker}?api=${encodeURIComponent(o.api)}&esh=${encodeURIComponent(o.esh)}` +
+  // worker 可能已經帶了 query ( 對資產加版本的站台就會 —— 沒有 cachestamp 的話
+  // 改了 wagent 卻載到舊的, 而且完全沒有跡象 )。硬接 '?' 會拼出兩個問號, 整串
+  // query 就廢了: api 讀不到而退回預設、headers 讀不到而少帶 CSRF —— 兩者都不會
+  // 報錯, 只會在別的地方以別的面貌出現。
+  const q = o.worker.indexOf('?') >= 0 ? '&' : '?';
+  const url = `${o.worker}${q}api=${encodeURIComponent(o.api)}&esh=${encodeURIComponent(o.esh)}` +
     `&workspace=${encodeURIComponent(o.root)}` +
     (devices ? `&devices=${encodeURIComponent(devices)}` : '') +
     (mounts ? `&mounts=${encodeURIComponent(mounts)}` : '') +
+    (headers ? `&headers=${encodeURIComponent(headers)}` : '') +
     (o.agentRoot ? `&agentRoot=${encodeURIComponent(o.agentRoot)}` : '');
   const worker = new Worker(url, {type: 'module'});
   const prefix = `c${Math.random().toString(36).slice(2, 8)}-`;
@@ -192,6 +203,11 @@ export function createRuntime(opt) {
         // 更新 device 檔案的內容。應用層是真相, 這裡只是把值推給 worker 的鏡像。
         setDevice: function(name, value) {
           worker.postMessage({type: 'device-set', name: name, value: value});
+        },
+        // 換掉打到 api 的 header。token 會過期 (session 重生、CSRF 換一輪),
+        // 所以不能只在建 runtime 時給一次。
+        setHeaders: function(h) {
+          worker.postMessage({type: 'headers-set', headers: h || {}});
         },
         devices: o.devices || [],
         // agent 的可見範圍。應用層決定 — 它才知道編輯對象是什麼。

@@ -31,7 +31,7 @@ function pruneImages(history) {
 }
 
 // browser 版 provider; 介面同 openai.js (見該檔說明)
-export function createSession({system, tools, runTool, api, model}) {
+export function createSession({system, tools, runTool, api, model, headers}) {
   const url = (api || '/api/agent') + '/llm/anthropic';
   const toolDefs = tools.map(function(t) {
     return {name: t.name, description: t.description, input_schema: t.parameters};
@@ -87,7 +87,9 @@ export function createSession({system, tools, runTool, api, model}) {
     if(cb && cb.onDelta) { params.stream = true; }
     return fetch(url, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      // headers 是 getter: token 會過期, 每次呼叫都要拿當下的那一份
+      headers: Object.assign({'Content-Type': 'application/json'},
+        (typeof headers === 'function' ? headers() : headers) || {}),
       body: JSON.stringify(params)
     })
       .then(checkResponse)

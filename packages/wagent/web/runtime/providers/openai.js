@@ -4,7 +4,7 @@ import {pruneContext, userContent, wrapNudge} from '../turn-context.js';
 // browser 版 provider: 打後端 llm proxy (原生 wire format), 自行跑 tool loop。
 // 介面同後端 providers/*: createSession({system, tools, runTool}) -> {send(text, cb), reset()}
 // runTool 可回傳 Promise (前端 fs / shell 皆為 async)
-export function createSession({system, tools, runTool, api, model}) {
+export function createSession({system, tools, runTool, api, model, headers}) {
   const url = (api || '/api/agent') + '/llm/openai';
   const toolDefs = tools.map(function(t) {
     return {type: 'function', function: {name: t.name, description: t.description, parameters: t.parameters}};
@@ -22,7 +22,9 @@ export function createSession({system, tools, runTool, api, model}) {
     if(cb && cb.onDelta) { params.stream = true; }
     return fetch(url, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      // headers 是 getter: token 會過期, 每次呼叫都要拿當下的那一份
+      headers: Object.assign({'Content-Type': 'application/json'},
+        (typeof headers === 'function' ? headers() : headers) || {}),
       body: JSON.stringify(params)
     })
       .then(checkResponse)
