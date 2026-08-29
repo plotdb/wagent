@@ -278,8 +278,9 @@ makechart 的 `raw` / `bind` —— 對它是全盲的,而**它會用猜的**。
  - `data` 是**過渡措施**。資料變動時 host 呼叫它做增量更新,沒實作就重新 mount
    (重掛會丟掉 block 的內部狀態:動畫重來、選取消失)。
    語意上它有點偏 —— `client()` 原本是「我對這個 host 回報的能力」,而餵資料
-   比較像 block 的公開行為 —— 但這是目前唯一合法的擴充點。
-   `@plotdb/block` 的 instance 已經留了 `update` 的位子(原始碼標著 TBD),
+   比較像 block 的公開行為。**它已不再是唯一的擴充點**:那個「公開行為」的位子
+   本來就是 `interface`,`adapt` 讓應用層直接用它(見下節)。
+   `@plotdb/block` 的 instance 另外留了 `update` 的位子(原始碼標著 TBD),
    那個做好之後 `data` 就退位。**host 不該直接改 `inst.data`** — 那是伸手動別人的內部狀態;
    代價是 `inst.data` 兩種做法都會過期(只有 instance 自己能改),
    目前無害,因為 `run()` 只在 init / destroy 讀它
@@ -299,14 +300,17 @@ makechart 的 `raw` / `bind` —— 對它是全盲的,而**它會用猜的**。
 
 先前這個假設漏在 wagent 五個地方(`blocks/<name>/index.html` 寫死在 prompt 的
 Workspace 結構、`compose()` 拼出的編輯對象、`runtime` 的 `io.listBlocks`、
-sandbox 的 `mount()` 與切換選單),已經全部移到應用層。sandbox 因此有**三個窗口**:
+sandbox 的 `mount()` 與切換選單),已經全部移到應用層。sandbox 因此有**四個窗口**:
 
     create('sandbox', el, {
       io,                                  // 泛用讀寫 (不含「列出 block」)
       data:   function(name) { ... },      // 這個 block 拿到的 opt.data
       source: function(name) { ... },      // 名字 -> 原始碼 (不給就把 name 當路徑)
-      list:   function() { ... }           // 可切換的清單 (不給就收起選單)
+      list:   function() { ... },          // 可切換的清單 (不給就收起選單)
+      adapt:  function(itf, value) { ... } // 資料怎麼進 block (不給就走 client.data)
     })
+
+`adapt` 是「資料怎麼進 block」的第二條路,見下方〈資料進 block 的兩條路〉。
 
 prompt 那側也一樣:`BASE` 只講 block 的**檔案格式**,不講它放哪;
 `compose()` 只說「正在編輯 block 甲」,不拼路徑。目錄約定由應用層寫在 `brief` / `purpose`
@@ -344,6 +348,36 @@ composer 的 `hostitf.get/set` 依 node id 從 `nodemgr` 取。兩邊的 block �
 
 目前測試框架注入的是 `{loadText, loadJSON}`(block 自己按路徑讀),**那是過渡做法**,
 記在 `spec/20260813-decoupling-and-architexture-refactor.md`。
+
+### 資料進 block 的兩條路
+
+預設那條是 `opt.data` 進 block、變動時 `client.data` 增量更新。它假設 block 是為
+這個 host 寫的 —— 宣告 `pkg.host`、實作 `client()`。
+
+**早於 host / client 機制存在的 block 不是這樣。** 它們透過 `interface` 對外提供方法,
+而那正是 `@plotdb/block` 本來就設計來讓 block 公開行為的地方(instance 的 `update`
+至今仍標著 TBD,`interface` 則一直可用)。makechart 的圖表就是這種:host 拿到
+interface 之後自己 `config` / `setRaw`,block 從不讀 `opt.data`。
+
+要它們改寫成 `client.data` 是本末倒置 —— 那等於為了一個 host 去改一批早就有公開介面
+的 block。所以 sandbox 開第四個窗口:
+
+    adapt: function(itf, value) {
+      itf.config(value.config);
+      itf.setRaw(value.rows, value.bind);
+    }
+
+`itf` 是 block instance 的 `interface()`,`value` 就是 `data(name)` 回的東西。
+掛好之後與資料變動時各呼叫一次;回 Promise 的話 sandbox 會等它,失敗則退回重掛
+(與 `client.data` 同一套約定 —— 不能留著舊畫面假裝更新過了)。
+
+判準與 `source` / `list` 同一條:**「資料怎麼進 block」是應用層的領域知識**,
+wagent 不知道也不該替它決定,所以開窗口而不是規定做法。給了 `adapt` 就走它,
+沒給就是原本的 `client.data`,兩者都沒有就重掛。
+
+report 的 `client.dataVia` 會講明走的是哪一條。不講的話,走 `adapt` 的應用會讓 agent
+看到「`implements` 是空的」卻又畫得出東西 —— 而它對看不懂的狀況會編故事。
+
 
 edge case:檔案多 / 大 / 動態的 block(遊戲素材、地圖圖磚)可能真的需要 fs 存取。這是 host 的選用能力,尚未實作;方向是 host 為每個 block instance 組一張掛載表(而非路徑白名單),並優先考慮用 Service Worker 把 fs 映成 URL 前綴,讓 block 維持標準 web 寫法(`fetch` / `<img src>` / CSS `url()`)。
 

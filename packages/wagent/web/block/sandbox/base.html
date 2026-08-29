@@ -44,6 +44,10 @@
         // 這是應用層的窗口 — 資料的語意屬於應用, wagent 對它的內容一無所知。
         // 不給就是空的; block 拿不到任何東西也應該能跑。
         this.data = typeof d.data === 'function' ? d.data : null;
+        // d.adapt: function(itf, value) -> 掛好之後、以及資料變動時呼叫, 由應用層
+        // 拿 block 自己的 interface 把資料餵進去。不給就走 opt.data + client.data。
+        // 為什麼需要這一條: 見下方 adaptData。
+        this.adapt = typeof d.adapt === 'function' ? d.adapt : null;
         this.imageWidth = d.imageWidth || 800;   // 送進 LLM 的圖寬, 直接對應 token 成本
         this.captureTimeout = d.captureTimeout || 6000;
         this.snapdom = null;
@@ -108,7 +112,9 @@
         // 拿到的只是一張隨機的動畫影格, 而 agent 會以為自己看到的是 t=3。
         function clientReport(report, c, o) {
           var caps = capsOf(c);
-          report.client = {implements: caps};
+          // 也講明資料是怎麼進 block 的。不講的話, 走 adapt 的應用會讓 agent 看到
+          // 「implements 是空的」卻又畫得出東西, 而它對看不懂的狀況會編故事。
+          report.client = {implements: caps, dataVia: self.adapt ? 'adapt' : 'opt.data'};
           if(o.time == null) { return; }
           report.client.seek = caps.indexOf('seek') >= 0 ? o.time : false;
           var hint = null;
@@ -384,6 +390,29 @@
             .then(function(d) { return (d && typeof d === 'object') ? d : {}; });
         }
 
+        // 把資料交給 block 的第二條路: 呼叫它自己的 interface。
+        //
+        // 預設那條 (opt.data 進 block, 變動時 client.data 增量更新) 假設 block 是為
+        // 這個 host 寫的。早於 host / client 機制存在的 block 不是 —— 它們透過
+        // `interface` 對外提供方法, 而那正是 @plotdb/block 本來就設計來讓 block
+        // 公開行為的地方 (instance 的 `update` 至今仍標著 TBD)。makechart 的圖表就是
+        // 這種: host 拿到 interface 之後自己 `config` / `setRaw`, block 從不讀 opt.data。
+        //
+        // 判準與 source / list 同一條: 「資料怎麼進 block」是應用層的領域知識,
+        // wagent 不知道也不該替它決定 —— 所以開一個窗口, 而不是規定一種做法。
+        // 這也讓 host.md 記著「語意有點偏」的 client.data 從唯一的擴充點降級成其中一種。
+        //
+        // 回 null 表示這條路不適用 (沒給 adapt, 或 block 沒有 interface), 由呼叫者退回預設。
+        function adaptData(inst, name) {
+          if(!self.adapt || !inst || typeof inst['interface'] !== 'function') { return null; }
+          var itf = inst['interface']();
+          if(!itf) { return null; }
+          return Promise.resolve()
+            .then(function() { return blockData(name); })
+            .then(function(v) { return self.adapt(itf, v); })
+            .then(function() { return {applied: 'adapt'}; });
+        }
+
         // workspace 裡的 block 用 ns 'local' 定址。block 之間要互相引用時:
         //
         //     init: function(opt) {
@@ -455,6 +484,10 @@
           return mount(name, holder)
             .then(function(r) {
               inst = r;
+              // fresh 是另外掛一份, 一樣要餵資料, 否則 responsive 檢查看到的是空畫面
+              return Promise.resolve(adaptData(r, name)).then(function() { return r; });
+            })
+            .then(function(r) {
               var c = clientOf(inst);
               return callClient(c, 'pause')
                 .then(function() { return o.time != null ? callClient(c, 'seek', o.time) : null; });
@@ -532,8 +565,12 @@
             self.lastError = null;
             var p = mount(name, el).then(function(r) {
               self.inst = r;
-              emit('rendered', name);
-              return r;
+              // 走 adapt 的 block 不從 opt.data 讀東西, 掛好要餵一次初始值 ——
+              // 少了這行畫面是空的而且沒有任何錯誤, 最會說謊的那種狀況。
+              return Promise.resolve(adaptData(r, name)).then(function() {
+                emit('rendered', name);
+                return r;
+              });
             }).catch(function(e) {
               self.lastError = String((e && e.message) || e);
               emit('render-error', {name: name, message: self.lastError});
@@ -604,12 +641,19 @@
           // 目前無害 —— run() 只在 init / destroy 讀它 —— 但這是上限, 不是設計。
           updateData: function() {
             if(!self.current) { return Promise.resolve({applied: 'none'}); }
-            var c = clientOf(self.inst);
             var remount = function(why) {
               self.itf.refresh();
               return (self.rendering || Promise.resolve()).catch(function() {})
                 .then(function() { return {applied: 'remount', reason: why}; });
             };
+            // 應用層給了 adapt 就走它 — 那是它對「資料怎麼進 block」的選擇。
+            var a = adaptData(self.inst, self.current);
+            if(a) {
+              return a.catch(function(e) {
+                return remount('adapt threw: ' + String((e && e.message) || e));
+              });
+            }
+            var c = clientOf(self.inst);
             if(!c || typeof c.data !== 'function') { return remount('block has no client.data'); }
             return Promise.resolve()
               .then(function() { return self.data ? self.data(self.current) : {}; })
