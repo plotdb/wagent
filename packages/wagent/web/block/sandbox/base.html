@@ -65,6 +65,8 @@
         // 這個 sandbox 作為 host 的識別碼。block 若在 pkg.host 宣告它,
         // 就能在 client() 回報 capture / pause / seek / state 等能力 (全部選用)。
         var HOST_BID = '@plotdb/wagent';
+        // 等渲染的上限, 見 atMost
+        var RENDER_WAIT = 3000;
 
         function emit(ev, data) {
           (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
@@ -307,9 +309,12 @@
           } else if(!box.width || !box.height) {
             r.hint = 'the container has zero width or height — give the block\'s outer wrapper an explicit size.';
           } else if(blank) {
-            // 背景分頁的空白不是 block 的錯 — 講清楚, 否則 agent 會去修一個不存在的 bug
+            // 空白有三種來源, 只有第三種是 block 的問題。分不清楚的話 agent 會去修
+            // 一個不存在的 bug —— 而它有寫入權。
             r.hint = (env && env.rafFired === false)
               ? 'the page is in a background tab so the browser froze its rendering pipeline — anything drawn via requestAnimationFrame (Chart.js animations, games) has not painted yet. this is very likely NOT a bug in the block; do not "fix" it based on this. ask the user to bring the tab to the front if you need to see it.'
+              : (env && env.settled === false)
+              ? 'the picture had not settled when sampled — it may simply still be appearing (a fade-in, or data still loading), not broken. this is NOT evidence of a bug: take another snapshot before concluding anything, and do not change data or code based on this one. if a second snapshot looks exactly the same, then it really is empty and the data path is worth investigating.'
               : 'the block rendered without throwing but looks empty — check the data actually reached the drawing code, and that the container has a non-zero size.';
           }
 
@@ -349,31 +354,104 @@
           });
         }
 
+        // 還在跑的 CSS transition / animation / Web Animation, 只算 el 子樹裡的。
+        //
+        // 為什麼取樣不夠: CSS 的過渡動的是 computed style, DOM 的屬性一動也不動 ——
+        // 連續兩次取樣一模一樣, 於是判定「穩定」, 於是回報 blank, 而畫面其實正在
+        // 浮現。反過來, 逐格改屬性的過渡 (d3 那種) 不會產生 animation 物件, 只有
+        // 取樣看得到。兩者互補, 所以兩個都要。
+        //
+        // 老實說: makechart 的泡泡圖不屬於前者 —— 它雖然寫了 transition: all, 但
+        // duration 是 0s, 那條規則什麼也沒做, 它的漸次浮現是自己的 rAF 迴圈在畫,
+        // 由取樣那一半接住。這個函式是為 Chart.js 那類真的用 CSS/WAAPI 的 block 準備的。
+        //
+        // 限制: getAnimations 只看得到同一份 document。block 是 csscope 掛在本頁的,
+        // 所以沒問題; 哪天改成 iframe 就得換成向裡面問。
+        function runningAnimations(el) {
+          if(!el || typeof document.getAnimations !== 'function') { return 0; }
+          var n = 0;
+          document.getAnimations().forEach(function(a) {
+            if(a.playState !== 'running') { return; }
+            var t = a.effect && a.effect.target;
+            if(t && (t === el || el.contains(t))) { n++; }
+          });
+          return n;
+        }
+
+        // 等一件事, 但不無限等。
+        //
+        // 分頁在背景時 Chrome 會凍結 rAF 與 ResizeObserver, 而有些 block 的 init 會等
+        // 它們 ( @plotdb/chart 就是等 ResizeObserver ) —— render 的 promise 於是永遠
+        // 不 resolve。沒有上限的話 snapshot 整個卡住, 而 inspect 明明有一句專門講
+        // 背景分頁的提示, 卻永遠送不到 agent 手上: 它會看到一個不回來的工具, 這比
+        // 看到「畫面空白, 因為分頁在背景」還難懂。
+        function atMost(p, ms) {
+          if(!p) { return Promise.resolve(); }
+          return Promise.race([
+            Promise.resolve(p).catch(function() {}),
+            new Promise(function(r) { setTimeout(r, ms); })
+          ]);
+        }
+
+        // 「畫面上有東西了嗎」。與 inspect 判 blank 的標準一致 —— 兩邊用不同標準的話,
+        // 會出現「settle 說還沒畫完, inspect 說畫好了而且是空的」這種自相矛盾的報告。
+        function hasContent(el) {
+          if(!el) { return false; }
+          if(el.querySelectorAll('path,rect,circle,ellipse,line,polyline,polygon,image,use').length) { return true; }
+          if((el.innerText || '').trim()) { return true; }
+          return el.querySelectorAll('*').length >= 2;
+        }
+
+        // 非 canvas 的畫面簽名。元素數與文字長度抓得到結構變化, 取樣幾個圖元的
+        // 幾何抓得到「結構沒變但東西在移動」( d3 的屬性過渡 )。
+        // 只取前 8 個 —— 這是每 100ms 跑一次的輪詢, 不是報告。
+        function domSignature(el) {
+          if(!el) { return ''; }
+          var shapes = el.querySelectorAll('path,rect,circle,ellipse,line,polyline,polygon,image,use');
+          var parts = [el.querySelectorAll('*').length, shapes.length, (el.innerText || '').length];
+          for(var i = 0; i < shapes.length && i < 8; i++) {
+            var b = shapes[i].getBoundingClientRect();
+            parts.push(Math.round(b.x) + ':' + Math.round(b.y) + ':' +
+                       Math.round(b.width) + ':' + Math.round(b.height));
+          }
+          return parts.join(',');
+        }
+
         // 剛掛上的 block 通常還在非同步載資料, 畫完也還有動畫 (Chart.js 預設 1s),
-        // 只等兩個 frame 會抓到空白。有 canvas 就輪詢到真的有畫東西為止 (或耗盡預算)。
-        // 等畫面**穩定**再取樣, 不是等「有東西」。
+        // 只等兩個 frame 會抓到空白。所以輪詢到畫面**穩定**再取樣, 不是等「有東西」。
         //
         // 舊版只輪詢到 ratio > 0.005 為止 — 那是為重掛路徑設計的 (空白 -> 出現內容)。
         // 增量更新 (client.data) 沒有空白階段, 第一次輪詢就返回, 於是取樣落在
         // Chart.js 動畫中途、甚至更新之前, 報告就會說 changedRatio: 0 ——
         // 而 prompt 明白告訴 agent「你剛改過卻沒變, 就回去查原因」, 它會去修一個好好的 block。
         //
-        // 現在的條件是「連續兩次取樣一致, 且不是空白」。動畫類永遠不會穩定,
-        // 所以會用滿 budget 並回報 settled: false — 那種情況本來就該用 pause / seek。
+        // 再舊一版只看 canvas: 沒有 canvas 就直接說 settled，SVG 的 block 等於沒等。
+        // 那是最貴的一種漏 —— 空白 + settled: true 讀起來就是「畫壞了」, 而 agent
+        // 有寫入權, 它會去修一個好好的圖表 (makechart 的資料事故 #1 就是這樣來的)。
+        //
+        // 穩定 = 子樹裡沒有還在跑的動畫, 且連續兩次取樣一致, 且不是空白。
+        // 「空白不算穩定」是刻意的: 真的空的 block 會用滿 budget 才回報, 代價是
+        // 幾秒; 反過來把「還在載」誤判成「畫壞了」的代價是 agent 去改資料。
+        // 一直動的 block 永遠不會穩定, 會用滿 budget 並回報 settled: false ——
+        // 那種情況本來就該用 pause / seek。
         function settle(el, budget) {
           return frames().then(function(rafFired) {
             var canvas = el && el.querySelector('canvas');
-            if(!canvas) { return {rafFired: rafFired, settled: true}; }
             var deadline = Date.now() + (budget || 0);
             var prev = null;
+            var animating = false;
             var poll = function() {
-              var s = sampleCanvas(canvas);
-              if(!s) { return {rafFired: rafFired, settled: true}; }
-              var stable = prev !== null && s.cells === prev && s.ratio > 0.005;
+              var s = canvas ? sampleCanvas(canvas) : null;
+              // 取樣不到 (跨來源污染) 就沒得判斷, 交給 inspect 去講
+              if(canvas && !s) { return {rafFired: rafFired, settled: true}; }
+              animating = runningAnimations(el) > 0;
+              var cur = s ? s.cells : domSignature(el);
+              var painted = s ? s.ratio > 0.005 : hasContent(el);
+              var stable = !animating && prev !== null && cur === prev && painted;
               if(stable || Date.now() > deadline) {
-                return {rafFired: rafFired, settled: !!stable};
+                return {rafFired: rafFired, settled: !!stable, animating: animating};
               }
-              prev = s.cells;
+              prev = cur;
               return new Promise(function(r) { setTimeout(r, 100); }).then(poll);
             };
             return poll();
@@ -580,6 +658,18 @@
             self.rendering = p;
             return p;
           },
+          // 畫面穩定了沒 —— 等進行中的渲染, 再等畫面不動。
+          //
+          // 為什麼要對外開: 視覺層要做「繪製中」指示的話, 它跟 snapshot 必須看同一個
+          // 訊號。接在 render 的 promise 上是不夠的 —— 那只代表掛好了, 圖表的淡入
+          // 才正要開始, 指示會在最容易誤判的那一刻剛好消失。
+          //
+          // 回 {settled, rafFired, animating}。settled: false 不是錯誤, 是「在預算內
+          // 沒有停下來」—— 一直動的 block 本來就會這樣。
+          settle: function(budget) {
+            return atMost(self.rendering, RENDER_WAIT)
+              .then(function() { return settle(self.el, budget == null ? 4000 : budget); });
+          },
           // 觀察通道 (見 context/project/host.md)。
           // 預設只回便宜的結構化報告 — 「空白 / 沒變化」不需要 vision token 就判斷得出來。
           //  - o.image: 是否出圖
@@ -602,7 +692,7 @@
             // 要強制重繪仍可傳 refresh: true。
             var ready = Promise.resolve();
             if(o.refresh === true && self.current) { self.itf.refresh(); }
-            if(self.rendering) { ready = self.rendering.catch(function() {}); }
+            if(self.rendering) { ready = atMost(self.rendering, RENDER_WAIT); }
             return ready
               .then(function() {
                 var c = clientOf(self.inst);
