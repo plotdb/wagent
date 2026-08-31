@@ -21,6 +21,15 @@
         this.autoFix = d.autoFix !== false;
         this.maxFix = d.maxFix || 2;
         this.fixCount = 0;
+        // 提議的節流。render-error 是**每次重繪**都會來一次的訊號, 而到達上限之後
+        // 我們不再自己動手, 只提議 —— 少了節流, 同一個錯誤會一張一張堆滿對話框,
+        // 而且每一張都長得一樣。實測: 一個面板的 bug 讓同樣的提議出現了四次。
+        //   offered  上一張還沒被處理的提議是哪一個錯 (name + message)
+        //   offers   自上次成功渲染以來提議過幾次 —— 擋的是「每次訊息都不一樣」
+        //            的遞迴錯誤, 那種 dedup 攔不住。
+        this.offered = null;
+        this.offers = 0;
+        this.maxOffer = d.maxOffer || 3;
         this.wrote = false;      // 這一輪 agent 有沒有寫過檔 (自動修正的 safe guard)
         this.busy = false;       // 正在跑 — 決定發話要開新的一輪還是插隊
         this.handlers = {};
@@ -71,7 +80,10 @@
               emit('queued', text);
               return Promise.resolve({queued: true});
             }
-            if(!(o && o.auto)) { self.fixCount = 0; self.wrote = false; }  // 用戶手動發話, 歸零
+            if(!(o && o.auto)) {   // 用戶手動發話, 歸零
+              self.fixCount = 0; self.wrote = false;
+              self.offered = null; self.offers = 0;
+            }
             self.busy = true;
             emit('busy', true);
             // agent loop 在本機 worker; transport 由 runtime 注入 (createRuntime().transport)
@@ -116,7 +128,9 @@
         // 渲染錯誤自動修正 (帶 safe guard, 見 init 註解)
         if(this.sandbox && this.sandbox.on) {
           this.sandbox.on('rendered', function(name) {
-            if(name === self.blockName) { self.fixCount = 0; }
+            if(name === self.blockName) {
+              self.fixCount = 0; self.offered = null; self.offers = 0;
+            }
           });
           this.sandbox.on('render-error', function(o) {
             // 只碰 agent 這一輪真的寫過、而且是目前編輯對象的 block —
@@ -125,6 +139,7 @@
             if(!self.wrote || o.name !== self.blockName) { return; }
             var fix = function() {
               self.fixCount++;
+              self.offered = null;   // 送出去了, 之後再壞就是新的一件事
               return self.itf.send(
                 '前端渲染 block「' + o.name + '」時發生錯誤:\n' + o.message +
                 '\n請 read_file 檢查並修正這個 block。',
@@ -134,6 +149,19 @@
             // 提議而不是逕自去修: 開關關著, 或自動修正已經試到上限。
             // 兩種情況都給使用者同一個出口 — 一顆按鈕, 按了才送。
             if(!self.autoFix || self.fixCount >= self.maxFix) {
+              var key = o.name + '\n' + o.message;
+              if(self.offered === key) { return; }        // 同一個錯, 只講一次
+              if(self.offers >= self.maxOffer) {
+                // 每次都是新訊息的遞迴錯誤。再往下貼只是把對話框洗掉, 使用者
+                // 反而看不到最早的那一個 —— 停在這裡, 說一聲就好。
+                if(self.offers === self.maxOffer) {
+                  self.offers++;
+                  emit('info', '渲染持續失敗且錯誤一直在變, 已停止提議 —— 請重新整理或自己看一下。');
+                }
+                return;
+              }
+              self.offers++;
+              self.offered = key;
               emit('fix-offer', {
                 name: o.name,
                 message: o.message,
