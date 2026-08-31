@@ -1,5 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {pruneContext, userContent, wrapNudge} from '../turn-context.js';
+import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply} from '../turn-context.js';
 
 // tool 結果可以是字串, 或 {text, image: {mediaType, data}} — anthropic 的 tool_result
 // content 支援 block 陣列, 圖可以直接放進去
@@ -31,8 +31,13 @@ function pruneImages(history) {
 }
 
 // browser 版 provider; 介面同 openai.js (見該檔說明)
-export function createSession({system, tools, runTool, api, model, headers}) {
+// maxSteps / softSteps: 一輪之內的模型呼叫上限, 見 turn-context.js 的 wrapLimit。
+// 由應用層決定 (createRuntime -> worker -> 這裡); 預設值是估的, 不是量的 —
+// 要調到對得先有 proxy 那邊的用量記錄。
+export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps}) {
   const url = (api || '/api/agent') + '/llm/anthropic';
+  const hardMax = maxSteps > 0 ? maxSteps : 30;
+  const softMax = softSteps > 0 ? Math.min(softSteps, hardMax) : Math.max(1, hardMax - 10);
   const toolDefs = tools.map(function(t) {
     return {name: t.name, description: t.description, input_schema: t.parameters};
   });
@@ -126,7 +131,13 @@ export function createSession({system, tools, runTool, api, model, headers}) {
         .then(function() { return runBlocks(blocks, i + 1, results); });
     }
 
+    let steps = 0;
+    let warned = false;
+
     const step = function() {
+      // hard limit: 不再呼叫模型。events 照常回傳 — 使用者要看得到做過什麼。
+      if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax), events: events, limited: true}); }
+      steps++;
       return createMessage(cb).then(function(response) {
         history.push({role: 'assistant', content: response.content});
         if(response.stop_reason === 'tool_use') {
@@ -135,6 +146,11 @@ export function createSession({system, tools, runTool, api, model, headers}) {
             // 已經含齊本輪所有 tool_result, 配對是完整的, 補一段 text 安全。
             const extra = cb && cb.nudge ? cb.nudge() : null;
             if(extra && extra.length) { results.push({type: 'text', text: wrapNudge(extra)}); }
+            // soft limit 只提醒一次 —— 每輪都附一遍是在燒 token 叫模型省 token
+            if(steps >= softMax && !warned) {
+              warned = true;
+              results.push({type: 'text', text: wrapLimit(steps, hardMax)});
+            }
             history.push({role: 'user', content: results});
             pruneImages(history);
             return step();

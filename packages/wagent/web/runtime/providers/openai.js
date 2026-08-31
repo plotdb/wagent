@@ -1,11 +1,14 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {pruneContext, userContent, wrapNudge} from '../turn-context.js';
+import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply} from '../turn-context.js';
 
 // browser 版 provider: 打後端 llm proxy (原生 wire format), 自行跑 tool loop。
 // 介面同後端 providers/*: createSession({system, tools, runTool}) -> {send(text, cb), reset()}
 // runTool 可回傳 Promise (前端 fs / shell 皆為 async)
-export function createSession({system, tools, runTool, api, model, headers}) {
+export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps}) {
   const url = (api || '/api/agent') + '/llm/openai';
+  // 見 anthropic.js 的同一段
+  const hardMax = maxSteps > 0 ? maxSteps : 30;
+  const softMax = softSteps > 0 ? Math.min(softSteps, hardMax) : Math.max(1, hardMax - 10);
   const toolDefs = tools.map(function(t) {
     return {type: 'function', function: {name: t.name, description: t.description, parameters: t.parameters}};
   });
@@ -121,11 +124,24 @@ export function createSession({system, tools, runTool, api, model, headers}) {
       }
     }
 
+    let steps = 0;
+    let warned = false;
+
+    // soft limit: openai 的 tool 結果是獨立訊息, 所以補一則 user message
+    // (同 flushNudges 的理由 — 必須等所有 tool_call 都有對應的 tool 訊息)
+    function flushLimit() {
+      if(steps < softMax || warned) { return; }
+      warned = true;
+      history.push({role: 'user', content: [{type: 'text', text: wrapLimit(steps, hardMax)}]});
+    }
+
     const step = function() {
+      if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax), events: events, limited: true}); }
+      steps++;
       return createMessage(cb).then(function(msg) {
         history.push(msg);
         if(msg.tool_calls && msg.tool_calls.length) {
-          return runCalls(msg.tool_calls, 0).then(flushImages).then(flushNudges).then(step);
+          return runCalls(msg.tool_calls, 0).then(flushImages).then(flushNudges).then(flushLimit).then(step);
         }
         return {reply: msg.content || '', events: events};
       });

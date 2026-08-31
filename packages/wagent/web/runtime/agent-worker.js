@@ -16,6 +16,10 @@ import {createSession as createAnthropic} from './providers/anthropic.js';
 const params = new URL(self.location.href).searchParams;
 const api = params.get('api') || '/api/agent';
 const eshUrl = params.get('esh') || '/assets/lib/@plotdb/esh/main/esh.js';
+// 一輪之內的模型呼叫上限 (見 turn-context.js 的 wrapLimit)。應用層透過
+// createRuntime 給; 0 / 沒給就用 provider 的預設。
+const maxSteps = parseInt(params.get('maxSteps'), 10) || 0;
+const softSteps = parseInt(params.get('softSteps'), 10) || 0;
 // 打到 api 的額外 header ( CSRF / bearer 之類 )。可變 —— token 會過期,
 // 主執行緒用 setHeaders 換新的; provider 拿的是 getter 而不是當下的值。
 let apiHeaders = {};
@@ -240,7 +244,8 @@ function getSession(key, block) {
     };
     sessions[key] = create({
       system: system, tools: tools.concat(hostTools), runTool: runTool,
-      api: api, model: inf.model, headers: getHeaders
+      api: api, model: inf.model, headers: getHeaders,
+      maxSteps: maxSteps, softSteps: softSteps
     });
     return sessions[key];
   });

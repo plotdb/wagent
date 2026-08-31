@@ -11,7 +11,15 @@ const DEFAULTS = {
   // 打到 api 的請求要附的額外 header。嵌進既有站台時常常是必要的 ——
   // 例如 CSRF token 或 bearer: 那些站台的 api 前面就擋著這類檢查, 而 llm proxy
   // 是 POST, 逃不掉。預設空的, 純 wagent 的 sample 不需要。
-  headers: null
+  headers: null,
+  // 一輪 (一次發話) 之內最多幾次模型呼叫。tool_use 會讓 agent 自己接下去,
+  // 沒有上限的話「改檔 → 重畫 → 看畫面 → 再改」可以跑到天亮 —— 而 proxy 的
+  // rate limit 數的是請求數, 每分鐘 60 次完全允許這件事。
+  //   softSteps 到了會提醒模型收尾 (它還有 maxSteps - softSteps 步可以交代),
+  //   maxSteps  到了由執行環境直接停止, 不再呼叫模型。
+  // 預設是估的 —— 要調到對, 看 proxy 記下來的實際用量。
+  maxSteps: 30,
+  softSteps: 20
 };
 
 export function createRuntime(opt) {
@@ -40,7 +48,9 @@ export function createRuntime(opt) {
     (devices ? `&devices=${encodeURIComponent(devices)}` : '') +
     (mounts ? `&mounts=${encodeURIComponent(mounts)}` : '') +
     (headers ? `&headers=${encodeURIComponent(headers)}` : '') +
-    (o.agentRoot ? `&agentRoot=${encodeURIComponent(o.agentRoot)}` : '');
+    (o.agentRoot ? `&agentRoot=${encodeURIComponent(o.agentRoot)}` : '') +
+    (o.maxSteps ? `&maxSteps=${encodeURIComponent(o.maxSteps)}` : '') +
+    (o.softSteps ? `&softSteps=${encodeURIComponent(o.softSteps)}` : '');
   const worker = new Worker(url, {type: 'module'});
   const prefix = `c${Math.random().toString(36).slice(2, 8)}-`;
   let seq = 0;
