@@ -1,5 +1,6 @@
 const {Readable} = require('stream');
 const {createMeter} = require('./meter');
+const lderr = require('./lderr');
 
 // LLM proxy: 前端跑 agent loop 時, 唯一需要的後端能力 — 注入 key 後轉發, SSE 原樣 pipe。
 // 不解析、不執行 body 內容; 只做 model 白名單、rate limit 與**用量記帳**。
@@ -65,7 +66,12 @@ module.exports = function(opt) {
     if(!p) { return res.status(404).json({error: `unknown provider: ${name}`}); }
     const key = p.key();
     if(!key) { return res.status(503).json({error: `no api key for ${name}`}); }
-    if(!limiter(req.ip)) { return res.status(429).json({error: 'rate limit exceeded'}); }
+    // 490 + lderror body: lderror 的 id 空間跟 HTTP 4xx/5xx 沒有一對一關係,
+    // 硬要對應就會把好幾種不同的情況擠進同一個 code (見 servebase 的
+    // backend/engine/error-handler.ls)。前端靠 id 分辨, 不比對訊息字串。
+    if(!limiter(req.ip)) {
+      return res.status(lderr.HTTP).json(lderr.body(lderr.ID.THROTTLED, 'rate limit exceeded'));
+    }
 
     const body = req.body || {};
     const allow = (opt.models || {})[name] || p.models;
@@ -95,6 +101,14 @@ module.exports = function(opt) {
         }, r));
       } catch(e) { log('llm', `!! usage hook: ${String((e && e.message) || e)}`); }
     };
+    // 使用者關分頁 / 按停止 / 換頁時是 **res 這端**關閉, 上游的 readable 不一定
+    // 會 emit end 或 error —— 少了這條, 那次呼叫完全不記帳。crash 是意外而且
+    // 有界, 這個是日常操作: 一旦有人發現「快結束時關掉分頁就免費」, 有界損失
+    // 就變成系統性白嫖。
+    //
+    // 正常結束時 close 也會發, 但 end 先跑, reported 已經是 true —— 這裡是
+    // no-op。status 0 表示「沒有完整走完」。
+    res.on('close', function() { report(0); });
 
     log('llm', `-> ${name} ${body.model || '(default)'}${body.stream ? ' (stream)' : ''}`);
     fetch(p.url, {

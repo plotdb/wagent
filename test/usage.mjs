@@ -1,9 +1,11 @@
 // proxy 的用量記帳。跑一個假的 upstream (不打真的 API), 確認:
+//  - billable (byte) 與 usage (真實 token) 兩個數字都在, 用途不同
 //  - anthropic 串流: message_start 的 input/cache + message_delta 的 output 都撈到
 //  - openai 串流: proxy 有補 stream_options.include_usage, 末尾那個 chunk 撈得到
-//  - 沒有 usage 的回應: 退回 bytes 估算, estimated 為 true
+//  - 沒有 usage 的回應: billable 照樣算得出來 (這正是用 byte 的理由)
+//  - 計價只算模型產出的內容, 不算 SSE 信封
 //  - 轉發的內容一字不差 (tee 不能動到 pipe)
-//  - 額度用完擋得下來
+//  - 額度用完擋得下來, 回 490 + lderror
 import http from 'node:http';
 import express from 'express';
 import assert from 'node:assert';
@@ -75,7 +77,7 @@ app.use('/api/agent/llm', (req, res, next) => {
   const a = accounts.resolve(req);
   if(!a) { return next(); }
   const c = accounts.check(a.key);
-  if(!c.ok) { return res.status(402).json({error: c.reason}); }
+  if(!c.ok) { return res.status(490).json({id: 1004, name: 'lderror', message: c.reason}); }
   req.account = a;
   next();
 });
@@ -111,10 +113,15 @@ assert.deepEqual(
   {input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite},
   {input: 1000, output: 500, cacheRead: 8000, cacheWrite: 400});
 ok(`anthropic: usage ${JSON.stringify(u)}`);
-assert.equal(records[0].estimated, false);
-// 1000*1 + 500*5 + 8000*0.1 + 400*1.25 = 4800
-assert.equal(records[0].credits, 4800);
-ok(`anthropic: credits ${records[0].credits} (output 5x, cacheRead 0.1x)`);
+// telemetry: 1000*1 + 500*5 + 8000*0.1 + 400*1.25 = 4800
+assert.equal(records[0].cost, 4800);
+ok(`anthropic: cost (telemetry) ${records[0].cost} — output 5x, cacheRead 0.1x`);
+// 計價: 只算內容 ('hi' = 2 bytes), 不算 SSE 信封
+const nb = records[0].bytes;
+assert.equal(nb.content, 2, `只該算模型產出的內容 (實際 ${nb.content})`);
+assert.ok(nb.response > 100, 'SSE 信封應該遠大於內容');
+assert.equal(records[0].billable, nb.request * 1 + 2 * 5);
+ok(`anthropic: billable ${records[0].billable} (內容 ${nb.content}B / 整個串流 ${nb.response}B)`);
 
 // 2. openai 串流 — proxy 要自己補 include_usage
 records.length = 0;
@@ -127,13 +134,13 @@ assert.deepEqual({input: u.input, output: u.output, cacheRead: u.cacheRead},
   {input: 1000, output: 500, cacheRead: 8000});
 ok(`openai: usage ${JSON.stringify(u)} (prompt_tokens 已扣掉 cached)`);
 
-// 3. 沒有 usage 的回應 → bytes 估算
+// 3. 沒有 usage 的回應 → billable 照樣算得出來
 records.length = 0;
 providers.anthropic.url = `${upUrl}/no-usage`;
 r = await call('anthropic', {model: 'claude-opus-4-8', stream: true, messages: []}, 'demo-alice');
-assert.equal(records[0].estimated, true, '沒有 usage 就該標成估算');
-assert.ok(records[0].credits > 0, '估算值要是正的');
-ok(`no-usage: 退回 bytes 估算, estimated=true, credits=${records[0].credits}`);
+assert.equal(records[0].usage, null, '沒有 usage 就是 null, 不要編一個出來');
+assert.ok(records[0].billable > 0, 'byte 計價不依賴 provider 回不回 usage');
+ok(`no-usage: usage=null 但 billable=${records[0].billable} — 這正是用 byte 的理由`);
 providers.anthropic.url = `${upUrl}/v1/messages`;
 
 // 4. 沒帶帳號 → 照樣轉發, 照樣算, 但不記帳
@@ -150,18 +157,23 @@ assert.ok(b.spent > 0);
 ok(`帳: alice 用了 ${b.spent}/${b.quota} cr`);
 
 r = await call('anthropic', {model: 'claude-opus-4-8', stream: true, messages: []}, 'demo-zero');
-assert.equal(r.status, 402, '額度為 0 要擋下來');
-ok('額度用完: 402, 沒有打到 upstream');
+assert.equal(r.status, 490, '額度為 0 要擋下來');
+assert.equal(JSON.parse(r.text).id, 1004, 'lderror id 要帶得到前端');
+ok('額度用完: 490 + lderror 1004, 沒有打到 upstream');
 
-// 6. 超支: 額度小的帳號一次呼叫就超過
+// 6. 超支: check 只看已用量, 所以一次大呼叫還是會超出去。
+//    這是**還沒做串流中途中止**之前的行為 — 做完之後這裡要改成「中止, 不超支」。
+records.length = 0;
+providers.anthropic.url = `${upUrl}/no-usage`;   // 吐 1000 bytes 內容
 r = await call('anthropic', {model: 'claude-opus-4-8', stream: true, messages: []}, 'demo-tight');
 assert.equal(r.status, 200, '第一次還在額度內 (check 只看已用量)');
 const t = accounts.balance('demo-tight');
-assert.ok(t.left < 0, '所以會超支 — 這是設計上接受的');
+assert.ok(t.left < 0, `一次大呼叫就超出去 (spent ${t.spent} / quota ${t.quota})`);
 ok(`超支一次呼叫: tight ${t.spent}/${t.quota} (left ${t.left}) — 下一次就擋掉`);
 r = await call('anthropic', {model: 'claude-opus-4-8', stream: true, messages: []}, 'demo-tight');
-assert.equal(r.status, 402);
-ok('下一次: 402');
+assert.equal(r.status, 490);
+ok('下一次: 490');
+providers.anthropic.url = `${upUrl}/v1/messages`;
 
 srv.close(); up.close();
 require('node:fs').rmSync(dbFile, {force: true});
