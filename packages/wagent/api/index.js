@@ -18,6 +18,8 @@ const proxy = require('./proxy');
 // opt.rate:      proxy 的 rate limit {max, windowMs}
 // opt.usage:     function(record) — 每次 LLM 呼叫的用量 (見 proxy.js / meter.js)。
 //                不給就不記帳; 帳戶與額度是應用層的事, wagent 只負責把數字算出來。
+// opt.budget:    function(req) -> 這次呼叫最多能花多少 (billable 單位)。
+//                串流中途累積超過就中止上游。不給就不守。
 // opt.tune:      覆寫計量權重
 module.exports = function(opt) {
   opt = opt || {};
@@ -31,7 +33,8 @@ module.exports = function(opt) {
 
   // browser 端 agent loop 用的 llm proxy — 後端唯一暴露的能力面
   router.post('/llm/:provider', proxy({
-    log: log, models: opt.models, rate: opt.rate, usage: opt.usage, tune: opt.tune
+    log: log, models: opt.models, rate: opt.rate,
+    usage: opt.usage, budget: opt.budget, tune: opt.tune
   }));
 
   router.get('/provider', (req, res) => { res.json(proxy.info()); });

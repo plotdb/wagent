@@ -52,13 +52,17 @@ function makeLimiter(opt) {
 // opt.usage:  function(record) — 每次呼叫結束後的用量。**不給就完全不記帳**,
 //             行為與先前一字不差 (同 sandbox 的 adapt / source / list 那條判準:
 //             帳戶與額度是應用層的領域知識, wagent 不知道也不該替它決定)。
-//             record: {provider, model, stream, status, usage, credits, estimated, bytes, ms, req}
+//             record: {provider, model, stream, status, billable, bytes, usage, cost, ms, req}
 // opt.tune:   覆寫各類 token 的權重 (見 meter.js)
+// opt.budget: function(req) -> 這次呼叫最多能花多少 (billable 單位), 或 null/
+//             Infinity 表示不限。**串流中途累積超過就中止上游** —— 額度是應用
+//             層的知識, wagent 只負責守。不給就不守 (行為與先前一字不差)。
 module.exports = function(opt) {
   opt = opt || {};
   const log = opt.log || function() {};
   const limiter = makeLimiter(opt.rate || {});
   const onUsage = typeof opt.usage === 'function' ? opt.usage : null;
+  const budgetOf = typeof opt.budget === 'function' ? opt.budget : null;
 
   return function(req, res) {
     const name = req.params.provider;
@@ -86,10 +90,25 @@ module.exports = function(opt) {
     }
 
     const meter = createMeter(name, opt.tune);
-    if(onUsage) { meter.request(body); }
+    // budget 要守就一定要有 request 的 byte 數, 不能只在 onUsage 時才算
+    if(onUsage || budgetOf) { meter.request(body); }
+
+    // 這次最多能花多少。null / Infinity = 不限。
+    let budget = null;
+    if(budgetOf) {
+      try { budget = budgetOf(req); }
+      catch(e) { log('llm', `!! budget hook: ${String((e && e.message) || e)}`); }
+      if(budget != null && isFinite(budget) && meter.result().billable > budget) {
+        // input 本身就超過 —— 連送都不用送。這是唯一還能用 HTTP status 的時機:
+        // 一旦開始 pipe, status 就定下來了 (見下面 abort 的註解)。
+        return res.status(lderr.HTTP).json(lderr.body(lderr.ID.QUOTA,
+          '額度不足以完成這次請求', {need: meter.result().billable, budget: budget}));
+      }
+    }
     const t0 = Date.now();
     // 一次呼叫只記一次帳: end / error / 中途斷線可能不只觸發一個
     let reported = false;
+    let done = false;      // 串流已經正常收尾 —— close 就不必再 abort
     const report = function(status) {
       if(!onUsage || reported) { return; }
       reported = true;
@@ -111,10 +130,15 @@ module.exports = function(opt) {
     res.on('close', function() { report(0); });
 
     log('llm', `-> ${name} ${body.model || '(default)'}${body.stream ? ' (stream)' : ''}`);
+    const ac = new AbortController();
+    // 使用者離開時也要放掉上游 —— 不然我們已經不看了, 它還在生成 (而且還在
+    // 計費)。這與 report(0) 是兩件事: 一個是記帳, 一個是停止花錢。
+    res.on('close', function() { if(!done) { ac.abort(); } });
     fetch(p.url, {
       method: 'POST',
       headers: p.headers(key),
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: ac.signal
     })
       .then(function(r) {
         res.status(r.status);
@@ -123,11 +147,38 @@ module.exports = function(opt) {
         if(!r.body) { report(r.status); return res.end(); }
         res.set('Cache-Control', 'no-cache');
         const stream = Readable.fromWeb(r.body);
+        const sse = (ct || '').indexOf('event-stream') >= 0;
         // tee: 只讀不改, 也不擋 —— pipe 照舊。記帳失敗最多是少一筆帳,
         // 絕不能變成使用者那端斷掉的串流。
-        if(onUsage) { tee(stream, meter, r.headers.get('content-type')); }
-        stream.on('end', function() { report(r.status); });
+        //
+        // 超出 budget 時 over() 被呼叫: 中止上游, 並**往串流裡寫一則我們自己的
+        // 錯誤**。不寫的話前端只會看到串流無故斷掉 —— 那是最難查的一種, 而且
+        // 額度用完是我們的決定, 不是上游的事實。
+        //
+        // 為什麼不能用 HTTP status: 這時 200 早就送出去了。中途的失敗只能走
+        // 帶內 (in-band), 這是串流協定的性質, 不是我們的選擇。
+        const over = function(used) {
+          if(done) { return; }
+          done = true;
+          log('llm', `!! ${name} 超出額度, 中止 (${used} / ${budget})`);
+          // **順序有意義**: 先 unpipe 再 end。反過來的話, pipe 手上還沒寫完的
+          // chunk 會在 res 結束之後才寫出去 —— ERR_STREAM_WRITE_AFTER_END,
+          // 而且是 unhandled 'error', 整個 process 掛掉。
+          try { stream.unpipe(res); } catch(e) { /* 已經斷了 */ }
+          try { ac.abort(); } catch(e) { /* 已經結束了 */ }
+          try { stream.destroy(); } catch(e) { /* 同上 */ }
+          try {
+            if(sse && !res.writableEnded) { res.write(errorEvent(used, budget)); }
+          } catch(e) { /* 對面已經走了 */ }
+          report(0);
+          try { if(!res.writableEnded) { res.end(); } } catch(e) { /* 同上 */ }
+        };
+        if(onUsage || budgetOf) { tee(stream, meter, ct, budget, over); }
+        stream.on('end', function() { done = true; report(r.status); });
+        // abort 之後 fetch 的 body 會 emit error —— 沒接的話是 unhandled。
+        // 這不是失敗, 是我們自己叫停的, 所以只記帳不多做事。
         stream.on('error', function() { report(r.status); });
+        res.on('error', function() { /* 對面斷線: close 那條已經處理了 */ });
         stream.pipe(res);
       })
       .catch(function(e) {
@@ -138,11 +189,15 @@ module.exports = function(opt) {
   };
 };
 
-// 從轉發中的串流分一份出來記帳。切事件的規則同 web/runtime/sse.js:
-// 以空行分事件, 取 data: 那幾行。非 SSE (非串流的 json) 就整包收起來。
-function tee(stream, meter, contentType) {
+// 從轉發中的串流分一份出來記帳, 並在超出 budget 時呼叫 over()。
+// 切事件的規則同 web/runtime/sse.js: 以空行分事件, 取 data: 那幾行。
+// 非 SSE (非串流的 json) 就整包收起來 —— 那種情況沒有「中途」可言, 收到就是
+// 全部, 所以不守 budget (該擋的在送出前就擋了)。
+function tee(stream, meter, contentType, budget, over) {
   const sse = !!contentType && contentType.indexOf('event-stream') >= 0;
+  const cap = (budget != null && isFinite(budget)) ? budget : null;
   let buf = '';
+  let stopped = false;
   stream.on('data', function(chunk) {
     try {
       const text = chunk.toString('utf8');
@@ -157,11 +212,31 @@ function tee(stream, meter, contentType) {
           .join('\n');
         if(data) { meter.event(data); }
       }
+      // 每個 chunk 檢查一次就夠 —— 這是純算術, 不碰 DB。超出的量最多是一個
+      // chunk, 那是可接受的損失 (而且我們有定價權)。
+      if(cap !== null && !stopped && meter.result().billable > cap) {
+        stopped = true;
+        over(meter.result().billable);
+      }
     } catch(e) { /* 記帳絕不影響轉發 */ }
   });
   stream.on('end', function() {
     try { if(!sse && buf) { meter.body(buf); } } catch(e) { /* 同上 */ }
   });
+}
+
+// 注入串流的錯誤事件。**這是 proxy 唯一往串流裡寫自己的東西的地方。**
+//
+// 用 anthropic 的 error 事件形狀是因為前端 (web/runtime/sse.js + providers)
+// 本來就認得它; 但 data 裡帶了 lderror 的 duck type, 所以前端分辨得出「這是
+// wagent 說的」而不是上游的錯誤 —— 靠 id, 不靠訊息字串。
+function errorEvent(used, budget) {
+  const payload = {
+    type: 'error',
+    error: lderr.body(lderr.ID.QUOTA, '額度用完, 這次回應在中途被停止',
+      {used: used, budget: budget, partial: true})
+  };
+  return `event: error\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
 module.exports.providers = PROVIDERS;

@@ -45,6 +45,18 @@ const usage = function(record) {
   accounts.charge(a.key, record);
 };
 
+// 這次呼叫最多能花多少 —— proxy 會在串流中途累積超過時中止上游。
+// 沒帶帳號就回 null (不守), 行為與沒有帳號機制時一樣。
+//
+// 用「剩餘額度」而不是某個固定上限: 額度剩多少就只能花多少, 於是超支從
+// 「必然」變成「不會發生」—— 先前 check 只看已用量, 一次大呼叫照樣衝過頭。
+const budget = function(req) {
+  const a = req.account;
+  if(!a) { return null; }
+  const b = accounts.balance(a.key);
+  return b ? Math.max(0, b.left) : 0;
+};
+
 // wagent 的後端只做三件事: 轉發 LLM 請求、給 system prompt、報告 provider。
 // workspace 與 agent loop 都在瀏覽器裡, 所以這裡沒有任何檔案系統設定。
 //
@@ -54,7 +66,7 @@ const usage = function(record) {
 // registerHost({brief, context}) — 見 web/src/pug/index.ls。
 app.use('/api/agent', require('@plotdb/wagent')({
   log: require('./lib/log'),
-  usage: usage
+  usage: usage, budget: budget
 }));
 
 // 第二個 mount, 代入 dataviz 的 purpose。一台 server 上可以有好幾個應用,
@@ -62,7 +74,7 @@ app.use('/api/agent', require('@plotdb/wagent')({
 app.use('/api/dataviz', require('@plotdb/wagent')({
   log: require('./lib/log'),
   purpose: require('./sample/dataviz/prompt'),
-  usage: usage
+  usage: usage, budget: budget
 }));
 
 // sample/ 是「應用」不是「頁面」: 不經 srcbuild, 直接以 ES module 交出去。

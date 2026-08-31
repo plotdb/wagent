@@ -161,18 +161,25 @@ assert.equal(r.status, 490, '額度為 0 要擋下來');
 assert.equal(JSON.parse(r.text).id, 1004, 'lderror id 要帶得到前端');
 ok('額度用完: 490 + lderror 1004, 沒有打到 upstream');
 
-// 6. 超支: check 只看已用量, 所以一次大呼叫還是會超出去。
-//    這是**還沒做串流中途中止**之前的行為 — 做完之後這裡要改成「中止, 不超支」。
+// 6. **只記帳不守門的話, 額度一定會被衝破。**
+//    這個 server 只掛了「打之前看看還有沒有剩」的 middleware, 沒有給 proxy
+//    opt.budget。check 只看已用量, 所以最後一次呼叫想花多少就花多少 ——
+//    這正是 opt.budget 存在的理由 (守門本身由 test/budget.mjs 驗)。
 records.length = 0;
 providers.anthropic.url = `${upUrl}/no-usage`;   // 吐 1000 bytes 內容
+let n = 0;
+let t = accounts.balance('demo-tight');
+while(t.left > 0 && n < 20) {
+  r = await call('anthropic', {model: 'claude-opus-4-8', stream: true, messages: []}, 'demo-tight');
+  assert.equal(r.status, 200, '還有餘額就該放行');
+  t = accounts.balance('demo-tight');
+  n++;
+}
+assert.ok(t.left < 0, `沒有 budget 就會衝破 (spent ${t.spent} / quota ${t.quota})`);
+ok(`只記帳: 打了 ${n} 次後衝破 ${t.spent}/${t.quota} (left ${t.left}) — 這是 opt.budget 要解決的`);
 r = await call('anthropic', {model: 'claude-opus-4-8', stream: true, messages: []}, 'demo-tight');
-assert.equal(r.status, 200, '第一次還在額度內 (check 只看已用量)');
-const t = accounts.balance('demo-tight');
-assert.ok(t.left < 0, `一次大呼叫就超出去 (spent ${t.spent} / quota ${t.quota})`);
-ok(`超支一次呼叫: tight ${t.spent}/${t.quota} (left ${t.left}) — 下一次就擋掉`);
-r = await call('anthropic', {model: 'claude-opus-4-8', stream: true, messages: []}, 'demo-tight');
-assert.equal(r.status, 490);
-ok('下一次: 490');
+assert.equal(r.status, 490, '衝破之後才擋 — 事後的');
+ok('下一次才擋: 490 (事後, 錢已經花掉了)');
 providers.anthropic.url = `${upUrl}/v1/messages`;
 
 srv.close(); up.close();

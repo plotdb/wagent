@@ -79,7 +79,13 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
       } else if(d.type === 'message_delta') {
         if(d.delta && d.delta.stop_reason) { stopReason = d.delta.stop_reason; }
       } else if(d.type === 'error') {
-        throw new Error((d.error && d.error.message) || 'stream error');
+        // proxy 中途中止 (額度用完) 時會注入一則帶 lderror duck type 的 error
+        // —— 靠 id 分辨「這是 wagent 說的」, 不比對訊息字串。不注入的話這裡
+        // 只會看到串流無故結束, 那是最難查的一種。
+        const x = d.error || {};
+        const e = new Error(x.message || 'stream error');
+        if(x.name === 'lderror' && !isNaN(+x.id)) { e.id = +x.id; e.name = 'lderror'; }
+        throw e;
       }
     }).then(function() {
       return {content: content.filter(Boolean), stop_reason: stopReason};

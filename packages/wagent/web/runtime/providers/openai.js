@@ -45,6 +45,14 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         return readSSE(r, function(ev) {
           if(ev.data === '[DONE]') { return; }
           const chunk = JSON.parse(ev.data);
+          // proxy 注入的中止事件 (見 api/proxy.js 的 errorEvent)。
+          // openai 的串流本身沒有 error 事件, 所以這一則一定是我們的。
+          if(chunk.type === 'error' || chunk.error) {
+            const x = chunk.error || {};
+            const e = new Error(x.message || 'stream error');
+            if(x.name === 'lderror' && !isNaN(+x.id)) { e.id = +x.id; e.name = 'lderror'; }
+            throw e;
+          }
           const c = (chunk.choices || [])[0] || {};
           if(c.finish_reason) { finish = c.finish_reason; }
           const d = c.delta || {};
