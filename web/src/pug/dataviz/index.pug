@@ -22,6 +22,12 @@ html
     .main
       .bar
         span#current —
+        //- 用量: 額度是後端 (lib/accounts.js) 的事, 這裡只顯示。
+        //- 帳號用 header 帶過去 —— 認證方式是應用層決定的, wagent 不管。
+        span#usage
+          select#account
+            option(value="") — 不帶帳號 —
+          span#balance
       #sandbox-root
       .sheet-pane
         .bar

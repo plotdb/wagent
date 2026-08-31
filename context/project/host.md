@@ -393,6 +393,73 @@ report 的 `client.dataVia` 會講明走的是哪一條。不講的話,走 `adap
 edge case:檔案多 / 大 / 動態的 block(遊戲素材、地圖圖磚)可能真的需要 fs 存取。這是 host 的選用能力,尚未實作;方向是 host 為每個 block instance 組一張掛載表(而非路徑白名單),並優先考慮用 Service Worker 把 fs 映成 URL 前綴,讓 block 維持標準 web 寫法(`fetch` / `<img src>` / CSS `url()`)。
 
 
+## 用量:步數上限與記帳
+
+成本失控的形狀不是「單次呼叫太大」(`max_tokens` 擋住了),是**一輪之內的迴圈**:
+`stop_reason === 'tool_use'` 會讓 agent 自己接下去,「改檔 → 重畫 → 看畫面 → 再改」
+可以跑到天亮。proxy 的 rate limit 數的是**請求數**,每分鐘 60 次完全允許這件事。
+
+因此分兩層,而且兩層的性質不同:
+
+### 前端:步數上限(UX 護欄)
+
+`createRuntime({maxSteps: 30, softSteps: 20})` → worker → provider 的 `send()`。
+
+ - **soft** 到了在下一輪的 tool result 之後附一段提醒,模型還有 `max - soft` 步可以收尾
+ - **hard** 到了由執行環境直接停止,**不再呼叫模型**(這時再花一次呼叫請它總結,
+   正好是我們想擋的那件事),回一則固定的說明;`events` 照常回傳 —— 使用者要看得到做過什麼
+
+只有 hard 的話,使用者拿到的是一個做到一半、沒有交代的狀態,而畫面上是改到一半的
+block —— 他不會知道發生了什麼。soft 存在的理由就是這個,不是省那幾步的錢。
+
+**提醒不能用 `wrapNudge` 包。** nudge 是「用戶說的話」,步數提醒是執行環境的陳述;
+混在一起模型會以為使用者在催他 —— 與 `wrapContext` 註解裡那個「誤以為自己答錯而道歉」
+是同一類錯。所以另有 `[execution-limit]` 這個 tag(見 `turn-context.js` 的 `wrapLimit`)。
+
+預設 30 / 20 是**估的不是量的**。要調到對,先看下面記下來的實際用量。
+
+### 後端:記帳(真正的執行點)
+
+agent loop 跑在瀏覽器,使用者改得動、也可以直接打 `/llm/:provider`。所以前端那層
+只是護欄,**真正的執行點只能是持有 key 的 proxy**。
+
+    require('@plotdb/wagent')({usage: function(record) { ... }})
+
+不給 `usage` 就完全不記帳,行為與先前一字不差 —— 同 `source` / `list` / `adapt`
+那條判準:帳戶與額度是應用層的領域知識。
+
+計量在 `api/meter.js`。**為什麼不是單純數傳輸量**:成本結構是不對稱的,output 約
+input 的 5 倍價,命中快取的 input 只有 1/10。用 bytes 計的話,命中快取的請求 body
+很大卻幾乎不花錢 → 被重罰,而 `turn-context.js` 那整套(system prompt 當快取前綴、
+每輪變的東西放尾端)正是為了保住快取 —— 等於用計費機制懲罰自己的優化。SSE 的信封
+膨脹、base64 圖的 bytes 與 token 差一個量級,也都是同方向的偏差。
+
+所以:**有 usage 的 provider 讀 usage,沒有的才退回 bytes 估算**(標 `estimated`,
+只適合擋失控,不適合計費)。額度單位是我們自己的 credit,不必等於任何 provider 的
+token,但要與真實成本同向。
+
+兩個 provider 的取法不同,而 openai **串流時預設不回 usage** —— proxy 自己補
+`stream_options.include_usage`。少了這行,走 openai 就只剩估算。
+
+記帳是從轉發中的串流 **tee 一份**出去算的:pipe 永遠是權威,解析失敗最多少一筆帳,
+不會變成使用者那端斷掉的串流。「proxy 不解析內容」那條線仍然成立 —— 只撈固定的計量
+欄位,不看訊息語意、不碰 tool。
+
+### 額度檢查必然會超支
+
+`check` 只能擋在呼叫**之前**,而那時還不知道這次要花多少 —— 真實用量要等回應結束,
+而串流一開始就不能反悔。所以設計上接受「最多超支一次呼叫」,而不是假裝擋得準。
+
+### demo
+
+`lib/accounts.js`(node:sqlite,無相依)+ `server.js` 的 guard,幾個假帳號:
+`demo-alice` / `demo-bob` / `demo-tight`(故意給很少)/ `demo-zero`(已用完)。
+用 `x-wagent-account` header 指定(走 `createRuntime` 的 `headers`),`/api/usage` 查詢。
+
+**這一份刻意放在 repo 根目錄的 `lib/` 而不是 `packages/wagent`** —— 認證方式、帳戶
+形狀、存在哪、怎麼查,全是 caller 的事。wagent 只負責把數字算出來。
+
+
 ## 邊界:host ↔ agent 是唯一必須 message-safe 的線
 
     agent (worker)  ──[ 必須 Promise + structured-cloneable ]──►  host
@@ -412,3 +479,6 @@ host ↔ block 之間**不需要**這個約束 — 若整個 host(含 block tree
  - **composer 整合**:composer 的 node tree 是「這個頁面要長這樣」的**文件狀態**,不該映射成 fs;fs 在那個情境下管的是這些 node 用到的**程式碼**(近似 node_modules)。tree 操作會是 host 的領域指令(可掛成 shell 自訂指令,依 id 操作,不需要是檔案)。
  - **高保真截圖(`getDisplayMedia`)**:snapdom 走的是 foreignObject 重繪 — 它畫的是「瀏覽器依 DOM 重新畫一次」的結果,不是使用者真正看到的那張。跨 origin 資源、CSS filter/blend、部分字體、以及任何非 DOM 的合成(video、WebGL 疊層)都可能失真。`getDisplayMedia` 抓的是**真實合成後的畫面**,能繞開全部這些。代價:需要使用者授權且只能由使用者手勢觸發(agent 無法自行開啟),抓的是整個分頁/視窗要再裁切,而且背景分頁一樣不更新。方向是當成**選用的高保真模式** — 使用者按一次「允許 agent 看畫面」,host 留住 stream,之後 snapshot 走 `ImageCapture` / `drawImage` 取幀,失敗再退回 snapdom。這也順帶解決 WebGL `preserveDrawingBuffer` 與 `capture` 沒實作的情況。
  - **fs 變更事件**:block 或使用者寫檔後,host 需要知道以便重繪、agent 需要知道以免撞樂觀鎖。esh 目前無 watch。
+ - **額度介面(`check`)**:目前 proxy 只有 `usage`(事後記帳),擋在前面的檢查是 demo
+   自己用 middleware 做的。要不要把 `check` 也收進 wagent 的 opt,等有實際用量數字之後
+   再定 —— `estimate` 該長什麼形狀,現在憑空猜就會猜錯。

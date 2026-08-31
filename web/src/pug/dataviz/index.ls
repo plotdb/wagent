@@ -32,6 +32,51 @@ create = (bid, root, d) ->
     .then (cls) -> cls.create {root, data: d}
     .then (inst) -> inst.interface!
 
+# ── 用量 ──────────────────────────────────────────────────────
+# 放在 module scope 而不是某個 .then 裡: refresh-balance 兩個 .then 都要用,
+# 而 LiveScript 的變數綁在**最內層的函式**, 留在第一個裡面第二個就看不到
+# (compile 得過, 執行才炸 —— 這裡就踩過一次)。
+# 帳號是**應用層**的事: wagent 只把每次呼叫的用量算出來交給 opt.usage,
+# 誰在用、額度多少由 lib/accounts.js 決定 (見 context/project/host.md)。
+# 這裡選的帳號經 createRuntime 的 headers 帶到 llm proxy。
+account = window.account = localStorage.getItem(\wagent-account) or ''
+account-el = document.getElementById \account
+balance-el = document.getElementById \balance
+
+render-balance = (b) ->
+  return balance-el.textContent = '' if not b
+  left = b.quota - b.spent
+  pct = if b.quota then Math.round(b.spent * 100 / b.quota) else 100
+  balance-el.textContent = "#{b.spent} / #{b.quota} cr (#{pct}%)"
+  balance-el.className = if left <= 0 then \over else if pct >= 80 then \warn else ''
+
+refresh-balance = ->
+  return render-balance null if not account
+  fetch '/api/usage', {headers: {'x-wagent-account': account}}
+    .then (r) -> r.json!
+    .then (j) -> render-balance j.balance
+    .catch -> void
+
+# 清單也從後端來 —— 假帳號的名字寫在 lib/accounts.js, 不該在頁面重複一份
+fetch '/api/usage' .then (r) -> r.json!
+  .then (j) ->
+    for a in (j.accounts or [])
+      o = document.createElement \option
+      o.value = a.key
+      o.textContent = "#{a.name} (#{a.quota} cr)"
+      account-el.appendChild o
+    account-el.value = account
+    refresh-balance!
+  .catch -> void
+
+account-el.onchange = ->
+  account := account-el.value
+  localStorage.setItem \wagent-account, account
+  # headers 是 getter, 換帳號立即生效 —— 不必重建 runtime
+  window.rt?set-headers (if account then {'x-wagent-account': account} else {})
+  refresh-balance!
+
+
 Promise.all [window.wagentRuntime, window.dataviz]
   .then ([{create-runtime}, dv]) ->
     # 資料由應用層持有。sheet UI 與 device 都只是它的視圖。
@@ -52,6 +97,10 @@ Promise.all [window.wagentRuntime, window.dataviz]
       mounts: {'/home': {backend: 'opfs', path: 'dataviz'}}
       root: '/home/dataviz'
       devices: <[sheet]>
+      # createRuntime 的 headers 是 JSON 序列化進 worker URL 的, 只能是**物件**
+      # (function 序列化成 undefined, 而且不會報錯 —— header 就這樣安靜地少掉)。
+      # 換帳號走 rt.set-headers, 那才是為了「token 會過期」留的活口。
+      headers: (if account then {'x-wagent-account': account} else {})
 
     create-runtime rt-opt
       .then (rt) ->
@@ -171,7 +220,13 @@ Promise.all [window.wagentRuntime, window.dataviz]
       show 'sample-bar'
       create {name: wagent, path: 'block/chat/index.html'}, document.getElementById(\chat-root),
         {api, block: 'sample-bar', sandbox: sb, transport: rt.transport}
-      .then (c) -> chat := c
+      .then (c) ->
+        chat := c
+        # 一輪跑完更新餘額。掛 'busy' 而不是 'reply': busy 轉 false 在成功與
+        # 失敗兩條路上都會發, 而 reply 只在成功時 —— 打到一半撞額度的話,
+        # 那才是最需要把餘額更新出來的時候。
+        # (chat 沒有 'end' 事件; 見 block/chat/base.html 的 itf。)
+        c.on \busy, (b) -> refresh-balance! if not b
 
   .catch (e) ->
     document.body.textContent = '初始化失敗: ' + e.message
