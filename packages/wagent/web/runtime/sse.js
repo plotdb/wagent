@@ -33,15 +33,24 @@ export function readSSE(response, onEvent) {
   return pump();
 }
 
-// 檢查回應是否為錯誤, 是則丟出帶訊息的 Error
+// 檢查回應是否為錯誤, 是則丟出帶訊息的 Error。
+//
+// body 若是 lderror 的形狀 ({id, name: 'lderror'}) 就把 id 帶到 Error 上 ——
+// 呼叫端要能靠 id 分辨「額度用完」和「上游壞了」, 而不是比對訊息字串
+// (字串會改, 也會因為 provider 不同而不同)。
 export function checkResponse(r) {
   if(r.ok) { return Promise.resolve(r); }
   return r.text().then(function(t) {
     let msg = t;
+    let ld = null;
     try {
       const j = JSON.parse(t);
-      msg = (j.error && (j.error.message || j.error)) || t;
+      if(j && j.name === 'lderror' && !isNaN(+j.id)) { ld = j; }
+      msg = (ld && ld.message) || (j.error && (j.error.message || j.error)) || t;
     } catch(e) { /* 非 json, 用原文 */ }
-    throw new Error(`${r.status}: ${msg}`);
+    const e = new Error(ld ? msg : `${r.status}: ${msg}`);
+    if(ld) { e.id = +ld.id; e.name = 'lderror'; }
+    e.status = r.status;
+    throw e;
   });
 }

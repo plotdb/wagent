@@ -1,5 +1,6 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply} from '../turn-context.js';
+import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
+import {ID, make as lderr} from '../lderr.js';
 
 // browser 版 provider: 打後端 llm proxy (原生 wire format), 自行跑 tool loop。
 // 介面同後端 providers/*: createSession({system, tools, runTool}) -> {send(text, cb), reset()}
@@ -7,6 +8,7 @@ import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply} from '../tu
 export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps}) {
   const url = (api || '/api/agent') + '/llm/openai';
   // 見 anthropic.js 的同一段
+  const MAX_TRUNCATED = 2;   // 見 anthropic.js
   const hardMax = maxSteps > 0 ? maxSteps : 30;
   const softMax = softSteps > 0 ? Math.min(softSteps, hardMax) : Math.max(1, hardMax - 10);
   const toolDefs = tools.map(function(t) {
@@ -33,13 +35,19 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
       .then(checkResponse)
       .then(function(r) {
         if(!params.stream) {
-          return r.json().then(function(j) { return j.choices[0].message; });
+          return r.json().then(function(j) {
+            var c = j.choices[0];
+            return Object.assign({}, c.message, {finish_reason: c.finish_reason});
+          });
         }
         const msg = {role: 'assistant', content: '', tool_calls: []};
+        let finish = null;
         return readSSE(r, function(ev) {
           if(ev.data === '[DONE]') { return; }
           const chunk = JSON.parse(ev.data);
-          const d = ((chunk.choices || [])[0] || {}).delta || {};
+          const c = (chunk.choices || [])[0] || {};
+          if(c.finish_reason) { finish = c.finish_reason; }
+          const d = c.delta || {};
           if(d.content) {
             msg.content += d.content;
             cb.onDelta(d.content);
@@ -53,6 +61,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
           }
         }).then(function() {
           if(!msg.tool_calls.length) { delete msg.tool_calls; }
+          msg.finish_reason = finish;
           return msg;
         });
       });
@@ -126,6 +135,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
 
     let steps = 0;
     let warned = false;
+    let truncated = 0;
 
     // soft limit: openai 的 tool 結果是獨立訊息, 所以補一則 user message
     // (同 flushNudges 的理由 — 必須等所有 tool_call 都有對應的 tool 訊息)
@@ -139,6 +149,21 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
       if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax), events: events, limited: true}); }
       steps++;
       return createMessage(cb).then(function(msg) {
+        // 撞到長度上限被截斷 —— 見 anthropic.js 的同一段。
+        // openai 的 tool 參數本來就是 JSON.parse 在 runCalls 裡丟例外 (會變成
+        // 一則 error 的 tool 訊息), 所以壞掉的參數不會被當成「沒有參數」;
+        // 但截斷的**文字**回覆一樣會被當成完整的交出去, 那才是這裡要擋的。
+        if(msg.finish_reason === 'length') {
+          truncated++;
+          if(truncated > MAX_TRUNCATED) {
+            throw lderr(ID.TRUNCATED,
+              '模型回應連續 ' + MAX_TRUNCATED + ' 次超過長度上限被截斷, 已停止。');
+          }
+          history.push({role: 'assistant', content: msg.content || '(回覆被截斷)'});
+          history.push({role: 'user', content: [{type: 'text', text: wrapTruncated()}]});
+          return step();
+        }
+        delete msg.finish_reason;   // 不是對話的一部分, 別送回 provider
         history.push(msg);
         if(msg.tool_calls && msg.tool_calls.length) {
           return runCalls(msg.tool_calls, 0).then(flushImages).then(flushNudges).then(flushLimit).then(step);

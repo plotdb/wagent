@@ -1,5 +1,6 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply} from '../turn-context.js';
+import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
+import {ID, make as lderr} from '../lderr.js';
 
 // tool 結果可以是字串, 或 {text, image: {mediaType, data}} — anthropic 的 tool_result
 // content 支援 block 陣列, 圖可以直接放進去
@@ -36,6 +37,9 @@ function pruneImages(history) {
 // 要調到對得先有 proxy 那邊的用量記錄。
 export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps}) {
   const url = (api || '/api/agent') + '/llm/anthropic';
+  // 連續截斷幾次就放棄。跟 chat 的 maxOffer 是同一類東西: 重試要有上限,
+  // 否則「每次都截斷」會變成另一種跑不完的迴圈。
+  const MAX_TRUNCATED = 2;
   const hardMax = maxSteps > 0 ? maxSteps : 30;
   const softMax = softSteps > 0 ? Math.min(softSteps, hardMax) : Math.max(1, hardMax - 10);
   const toolDefs = tools.map(function(t) {
@@ -67,8 +71,10 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         }
       } else if(d.type === 'content_block_stop') {
         if(partial[d.index] != null) {
+          // 解不開就是**被截斷**, 不是「沒有參數」。先前這裡靜靜給 {},
+          // 於是 edit_file({}) 就送出去了 —— 改壞檔案而且沒有任何跡象。
           try { content[d.index].input = JSON.parse(partial[d.index] || '{}'); }
-          catch(e) { content[d.index].input = {}; }
+          catch(e) { content[d.index].input = {}; content[d.index].bad = true; }
         }
       } else if(d.type === 'message_delta') {
         if(d.delta && d.delta.stop_reason) { stopReason = d.delta.stop_reason; }
@@ -115,6 +121,17 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
       if(i >= blocks.length) { return Promise.resolve(results); }
       const b = blocks[i];
       if(b.type !== 'tool_use') { return runBlocks(blocks, i + 1, results); }
+      if(b.bad) {
+        // 參數是壞的, 不能拿去執行 —— 但也不能不回: tool_use 少了配對的
+        // tool_result, provider 會拒絕整個請求。回一則錯誤讓模型自己重來。
+        events.push({tool: b.name, input: {}, error: true});
+        results.push({
+          type: 'tool_result', tool_use_id: b.id, is_error: true,
+          content: 'tool input was truncated and could not be parsed. ' +
+            'retry with smaller arguments (e.g. edit in several steps).'
+        });
+        return runBlocks(blocks, i + 1, results);
+      }
       return Promise.resolve()
         .then(function() { return runTool(b.name, b.input); })
         .then(function(out) {
@@ -133,12 +150,35 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
 
     let steps = 0;
     let warned = false;
+    let truncated = 0;
 
     const step = function() {
       // hard limit: 不再呼叫模型。events 照常回傳 — 使用者要看得到做過什麼。
       if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax), events: events, limited: true}); }
       steps++;
       return createMessage(cb).then(function(response) {
+        // 回應撞到 max_tokens 被截斷。先前這裡完全沒有檢查 —— 截斷的回覆會被
+        // 當成完整的交出去, 而截斷的 tool 參數會被當成「沒有參數」。
+        //
+        // 不能把截斷的 assistant 訊息原樣接回去: 裡面的 tool_use 參數是壞的,
+        // 配一個 tool_result 給它只是把錯誤往下傳。所以丟掉 tool_use、留下
+        // 文字, 再附一段說明讓模型自己把工作拆小 —— 這比在 byte 層做續接
+        // 穩健得多, 而且 loop 本來就是 agentic 的。
+        if(response.stop_reason === 'max_tokens') {
+          truncated++;
+          if(truncated > MAX_TRUNCATED) {
+            throw lderr(ID.TRUNCATED,
+              '模型回應連續 ' + MAX_TRUNCATED + ' 次超過長度上限被截斷, 已停止。');
+          }
+          var texts = response.content.filter(function(b) { return b.type === 'text'; });
+          // 空的 assistant 訊息不合法, 而 user 訊息也不能直接接在 user 之後
+          history.push({
+            role: 'assistant',
+            content: texts.length ? texts : [{type: 'text', text: '(回覆被截斷)'}]
+          });
+          history.push({role: 'user', content: [{type: 'text', text: wrapTruncated()}]});
+          return step();
+        }
         history.push({role: 'assistant', content: response.content});
         if(response.stop_reason === 'tool_use') {
           return runBlocks(response.content, 0, []).then(function(results) {
