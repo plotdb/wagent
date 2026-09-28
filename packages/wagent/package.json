@@ -1,6 +1,6 @@
 {
   "name": "@plotdb/wagent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "agent-compatible editing host: the agent works in a browser-local workspace and can see what it renders",
   "main": "api/index.js",
   "files": ["api/", "web/", "README.md"],

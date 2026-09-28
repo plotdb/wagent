@@ -1,6 +1,6 @@
 # Change Logs
 
-## master
+## v0.3.0
 
  - features:
    - `preset` 選項 — `require('@plotdb/wagent')({preset})`,決定 system prompt 的基底與 `snapshot` tool 的樣子

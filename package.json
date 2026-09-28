@@ -1,7 +1,7 @@
 {
   "name": "wagent-workspace",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "@plotdb/wagent — monorepo 與 demo 頁面",
   "workspaces": [
     "packages/*"
