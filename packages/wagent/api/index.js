@@ -13,6 +13,8 @@ const proxy = require('./proxy');
 //
 // opt.purpose:   領域 prompt, 由應用層提供 (wagent 不內建領域;
 //                不給就是一個純粹的 block 編輯環境)
+// opt.preset:    應用的形狀, 'block' (預設) 或 'plain' (不編輯 block 的應用)。
+//                決定 system prompt 的基底與 snapshot tool 的樣子, 見 api/prompt.js
 // opt.log:       logger function(tag, msg)
 // opt.models:    覆寫各 provider 的 model 白名單
 // opt.rate:      proxy 的 rate limit {max, windowMs}
@@ -25,6 +27,7 @@ module.exports = function(opt) {
   opt = opt || {};
   const log = opt.log || function() {};
   const purpose = opt.purpose || '';
+  const preset = prompt.preset(opt.preset);
   const router = express.Router();
 
   // 前端資產: block (chat / sandbox) 與 runtime (browser agent worker)
@@ -39,9 +42,11 @@ module.exports = function(opt) {
 
   router.get('/provider', (req, res) => { res.json(proxy.info()); });
 
-  // system prompt 只留一份, 在後端 (前端改不動, 也不必重複維護)
+  // system prompt 只留一份, 在後端 (前端改不動, 也不必重複維護)。
+  // preset 一併回傳: worker 依它挑 snapshot tool 的定義 —— tool 定義在前端,
+  // 但「這是哪一種應用」只在這裡決定一次, 兩邊才不會各說各話。
   router.get('/prompt', (req, res) => {
-    res.json({system: prompt.compose(purpose, req.query.block || null)});
+    res.json({system: prompt.compose(purpose, req.query.block || null, preset), preset: preset});
   });
 
   return router;

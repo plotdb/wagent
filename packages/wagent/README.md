@@ -12,6 +12,10 @@
 
  - `workspace`:workspace 目錄(檔案操作被限制在此目錄內)
  - `purpose`:領域 prompt,預設為資料視覺化;可用 `agent.prompt.BASE` / `agent.prompt.DATAVIZ` 參考組合
+ - `preset`:應用的形狀,決定 system prompt 的基底與 `snapshot` tool 的樣子
+   - `'block'`(預設):編輯 `@plotdb/block` 的環境 —— block 格式、sandbox 的 snapshot(`fresh` / `time` / `target`)、新增 / 編輯模式
+   - `'plain'`:不編輯 block 的應用(聊天角色、裝置控制、表單…)—— 只留 workspace 的檔案操作與泛用的 snapshot(只有 `image`),
+     其餘全由 `purpose` 與 host 的 `brief` / `tools` 描述
  - `log`:`function(tag, msg)`,預設不輸出
  - `providers`:覆寫 LLM provider 清單(預設 anthropic + openai,依 `.env` key 自動選擇)
  - `stream`:後端允許的最高即時等級,`'none'`(單次 JSON)/ `'tool'`(SSE 推送 tool 事件)/ `'token'`(SSE 再加文字逐段),預設 `'token'`

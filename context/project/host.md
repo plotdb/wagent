@@ -254,6 +254,31 @@ makechart 的 `raw` / `bind` —— 對它是全盲的,而**它會用猜的**。
    它上次其實是對的。少了佔位,模型無法區分「狀況變了」與「我搞錯了」,於是**編出一個不存在的錯誤**
 
 
+### 7. preset — 應用的形狀
+
+    require('@plotdb/wagent')({preset: 'plain', purpose: '...'})
+
+**block 編輯是 wagent 的主場景, 但不是唯一的應用。** 先前 `compose()` 永遠以 block 格式、
+sandbox 的 snapshot、「新增 / 編輯模式」開頭, `purpose` 只能接在後面 —— 拿 wagent 做一個
+不寫 block 的應用 (聊天角色操作裝置、表單助手), 那一大段會把模型帶去寫 HTML,
+應用層只能自己搶 `GET /prompt` 整份換掉 (0928-timebox-evo 就是這樣繞的)。
+
+preset 把「這是哪一種應用」變成一個選項:
+
+ - `block` (預設): 原本的行為, prompt 一字不差 (`test/preset.mjs` 守著)
+ - `plain`: 只留 workspace 的檔案操作; snapshot 換成泛用版 —— 只有 `image`,
+   「報告裡有什麼」交給應用的 `brief` 說明。`fresh` / `time` / `target` 是 sandbox 的概念,
+   留著的話模型會去傳, 而 host 根本不認得
+
+**只在 api 決定一次。** prompt 在後端、tool 定義在前端 (`web/runtime/tools.js`),
+兩邊以 preset 名稱對應: `GET /prompt` 回 `{system, preset}`, worker 用 `toolsFor(preset)` 取 tool。
+不讓前端另外指定, 是因為兩邊各自設定就會出現「prompt 是 plain、tool 是 block」這種組合,
+而且不會報錯。preset 打錯字在**掛載時**就丟錯, 不等到第一次對話。
+
+未定: preset 目前是固定的兩個。要不要開放自訂 (傳物件而不是名字) 等有第三種應用再說 ——
+現在猜形狀會猜錯, 而且自訂 preset 也要同時提供 prompt 與 snapshot tool 兩半。
+
+
 ## Agent loop 的職責
 
  - 取得固定五個 tool(`run_shell` / `read_file` / `write_file` / `edit_file` / `snapshot`)加上 host 選用的 tools

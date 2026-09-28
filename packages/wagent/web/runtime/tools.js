@@ -82,7 +82,31 @@ export const snapshotTool = {
   }
 };
 
+// plain preset 的 snapshot: 看的是「應用現在顯示什麼」, 不是 block 的渲染。
+// fresh / seek / target 都是 sandbox 的概念, 對不編輯 block 的應用沒有意義 ——
+// 留著的話模型會去傳它們, 而 host 根本不認得。報告內容由應用決定 (brief 會說)。
+export const plainSnapshotTool = {
+  name: 'snapshot',
+  description: 'Inspect what the application is currently showing. Returns a structured report whose contents are defined by the application (see its notes). With image:true it also returns a picture. You MUST set image:true whenever the question is about how it LOOKS; the report cannot answer that. Do not claim to have seen it unless you requested the image.',
+  parameters: {
+    type: 'object',
+    properties: {
+      image: {type: 'boolean', description: 'also return a picture. default false — use only when you need to judge something visual'}
+    },
+    additionalProperties: false
+  }
+};
+
+// preset 名稱與 api/prompt.js 的 PRESETS 一一對應
+export const SNAPSHOT_TOOLS = {block: snapshotTool, plain: plainSnapshotTool};
+
 export const tools = shellTools.concat(contentTools, [snapshotTool]);
+
+// 不認得的 preset 退回 block —— 那是 api 端掛載時就會擋下的錯, 走到這裡代表
+// api 比 worker 舊 (沒回 preset), 維持舊行為最安全
+export function toolsFor(preset) {
+  return shellTools.concat(contentTools, [SNAPSHOT_TOOLS[preset] || snapshotTool]);
+}
 
 // agent 的 shell 是 rooted 的 — 它的 "/" 就是 workspace (或應用層指定的範圍),
 // 所以路徑一律以 root 為準, 不再前置 /home/workspace。

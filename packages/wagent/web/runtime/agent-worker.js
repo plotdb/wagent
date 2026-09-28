@@ -9,7 +9,7 @@
 //  - host 層:          {type: 'host-tools', tools}   主執行緒註冊額外 tool
 //                      {type: 'host-call', id, name, args} -> {type: 'host-result', id, ok, ...}
 //                      非檔案系統的操作 (snapshot 等) 在主執行緒執行, 由此轉呼叫
-import {tools, makeRunTool, ROOT} from './tools.js';
+import {toolsFor, makeRunTool, ROOT} from './tools.js';
 import {createSession as createOpenAI} from './providers/openai.js';
 import {createSession as createAnthropic} from './providers/anthropic.js';
 
@@ -243,7 +243,7 @@ function getSession(key, block) {
         });
     };
     sessions[key] = create({
-      system: system, tools: tools.concat(hostTools), runTool: runTool,
+      system: system, tools: toolsFor(r[1].preset).concat(hostTools), runTool: runTool,
       api: api, model: inf.model, headers: getHeaders,
       maxSteps: maxSteps, softSteps: softSteps
     });

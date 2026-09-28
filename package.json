@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.js",
     "log": "tail -n 100 -f logs/server.log",
-    "test": "node test/node-esh.mjs && node test/nudge.mjs && node test/steps.mjs && node test/truncate.mjs && node test/lderr.mjs && node test/budget.mjs && node test/usage.mjs",
+    "test": "node test/node-esh.mjs && node test/nudge.mjs && node test/steps.mjs && node test/truncate.mjs && node test/lderr.mjs && node test/budget.mjs && node test/usage.mjs && node test/preset.mjs",
     "postinstall": "fedep"
   },
   "license": "MIT",
