@@ -29,9 +29,15 @@
     "playwright": ">=1.40.0"
   },
   "peerDependenciesMeta": {
-    "@plotdb/block": {"optional": true},
-    "@zumer/snapdom": {"optional": true},
-    "playwright": {"optional": true}
+    "@plotdb/block": {
+      "optional": true
+    },
+    "@zumer/snapdom": {
+      "optional": true
+    },
+    "playwright": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@plotdb/block": "^5.7.3",
@@ -42,7 +48,7 @@
     "@plotdb/sheet": "^0.7.1",
     "@plotdb/srcbuild": "^0.0.70",
     "@zumer/snapdom": "^2.24.1",
-    "fedep": "^1.7.4",
+    "fedep": "^1.9.0",
     "livescript": "^1.6.0",
     "playwright-core": "^1.62.1",
     "proxise": "^1.0.1",
