@@ -2,6 +2,14 @@
 
 ## v0.3.0
 
+ - packaging:
+   - repo 根目錄就是 `@plotdb/wagent`,不再是 monorepo ( `packages/` 拿掉 )
+     - `api/`:後端 ( 原 `packages/wagent/api` ),`require('@plotdb/wagent')`
+     - `client/`:前端 runtime 與 block ( 原 `packages/wagent/web` ),fedep 用 `{name: '@plotdb/wagent', dir: 'client'}`
+     - `headless/`:原 `@plotdb/wagent-headless`,改為 `require('@plotdb/wagent/headless')`,`playwright` 為 optional peer
+   - demo 用的套件移到 devDependencies,執行期相依只剩 `express`;前端相依改列 peerDependencies
+   - 移除 `postinstall: fedep` ( 會在每個安裝 wagent 的專案裡執行 ),demo 改用 `npm run setup`
+   - 以 `npm run release` ( `fedep publish -g --skip-dist` ) 發布到 github release branch
  - features:
    - `preset` 選項 — `require('@plotdb/wagent')({preset})`,決定 system prompt 的基底與 `snapshot` tool 的樣子
      - `block` (預設):原本的行為,prompt 一字不差

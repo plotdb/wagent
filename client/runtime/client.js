@@ -197,7 +197,7 @@ export function createRuntime(opt) {
       }
       // 泛用的檔案讀寫。**不提供「列出 block」** — 那需要知道 block 放在哪個目錄、
       // 檔名叫什麼, 而目錄形狀是應用層的約定 (單一 block 的應用根本沒有 blocks/)。
-      // 應用要列清單就用 sh.run + io.loadText 自己組 (見 packages/dataviz/web/blocks.js)。
+      // 應用要列清單就用 sh.run + io.loadText 自己組 (見 sample/dataviz/blocks.js)。
       const io = {
         loadText: function(p) { return sh.io.readFile(abs(p)); },
         loadJSON: function(p) { return sh.io.readFile(abs(p)).then(JSON.parse); },

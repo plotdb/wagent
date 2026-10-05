@@ -6,7 +6,7 @@ const lderr = require('./lderr');
 // 不解析、不執行 body 內容; 只做 model 白名單、rate limit 與**用量記帳**。
 //
 // 記帳為什麼在這裡: agent loop 跑在瀏覽器, 使用者改得動也可以直接打這個 endpoint。
-// 前端的步數上限 (見 web/runtime/turn-context.js) 是 UX 護欄, 真正的執行點只能是
+// 前端的步數上限 (見 client/runtime/turn-context.js) 是 UX 護欄, 真正的執行點只能是
 // 持有 key 的這一層。
 //
 // 「不解析內容」那條線仍然成立: 記帳只從固定的計量欄位撈數字, 不看訊息語意、
@@ -190,7 +190,7 @@ module.exports = function(opt) {
 };
 
 // 從轉發中的串流分一份出來記帳, 並在超出 budget 時呼叫 over()。
-// 切事件的規則同 web/runtime/sse.js: 以空行分事件, 取 data: 那幾行。
+// 切事件的規則同 client/runtime/sse.js: 以空行分事件, 取 data: 那幾行。
 // 非 SSE (非串流的 json) 就整包收起來 —— 那種情況沒有「中途」可言, 收到就是
 // 全部, 所以不守 budget (該擋的在送出前就擋了)。
 function tee(stream, meter, contentType, budget, over) {
@@ -227,7 +227,7 @@ function tee(stream, meter, contentType, budget, over) {
 
 // 注入串流的錯誤事件。**這是 proxy 唯一往串流裡寫自己的東西的地方。**
 //
-// 用 anthropic 的 error 事件形狀是因為前端 (web/runtime/sse.js + providers)
+// 用 anthropic 的 error 事件形狀是因為前端 (client/runtime/sse.js + providers)
 // 本來就認得它; 但 data 裡帶了 lderror 的 duck type, 所以前端分辨得出「這是
 // wagent 說的」而不是上游的錯誤 —— 靠 id, 不靠訊息字串。
 function errorEvent(used, budget) {

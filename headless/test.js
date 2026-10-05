@@ -1,6 +1,6 @@
 // headless renderer 的煙霧測試。
 //
-// 跑法: node packages/wagent-headless/test.js
+// 跑法: node headless/test.js
 // 環境變數 PW_EXEC 可指定 chromium 執行檔 (playwright-core 沒下載瀏覽器時)。
 
 const fs = require('fs');

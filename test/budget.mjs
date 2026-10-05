@@ -12,8 +12,8 @@ import assert from 'node:assert';
 import {createRequire} from 'node:module';
 
 const require = createRequire(import.meta.url);
-const wagent = require('../packages/wagent/api/index.js');
-const lderr = require('../packages/wagent/api/lderr.js');
+const wagent = require('../api/index.js');
+const lderr = require('../api/lderr.js');
 
 const ok = (m) => console.log(`  ✓ ${m}`);
 
@@ -43,7 +43,7 @@ upstream.post('/v1/messages', async (req, res) => {
 });
 
 const up = await new Promise((r) => { const s = upstream.listen(0, () => r(s)); });
-const providers = require('../packages/wagent/api/proxy.js').providers;
+const providers = require('../api/proxy.js').providers;
 providers.anthropic.url = `http://127.0.0.1:${up.address().port}/v1/messages`;
 process.env.ANTHROPIC_API_KEY = 'test-key';
 

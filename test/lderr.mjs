@@ -1,4 +1,4 @@
-// api/lderr.js (CJS, 後端) 與 web/runtime/lderr.js (ESM, 前端) 必須一致。
+// api/lderr.js (CJS, 後端) 與 client/runtime/lderr.js (ESM, 前端) 必須一致。
 //
 // 分成兩份是因為模組系統不同 —— 後端是 CJS, 前端 runtime/ 是直接送原始 ES
 // module 給瀏覽器 (沒有打包步驟)。不是因為它們可以分岔: id 分岔的話, 後端送
@@ -6,10 +6,10 @@
 // 都對。所以這裡把它釘住。
 import assert from 'node:assert';
 import {createRequire} from 'node:module';
-import * as web from '../packages/wagent/web/runtime/lderr.js';
+import * as web from '../client/runtime/lderr.js';
 
 const require = createRequire(import.meta.url);
-const api = require('../packages/wagent/api/lderr.js');
+const api = require('../api/lderr.js');
 
 const ok = (m) => console.log(`  ✓ ${m}`);
 console.log('lderr');

@@ -7,8 +7,8 @@
  *
  * 跑: node test/nudge.mjs
  */
-import {createSession as anthropic} from '../packages/wagent/web/runtime/providers/anthropic.js';
-import {createSession as openai} from '../packages/wagent/web/runtime/providers/openai.js';
+import {createSession as anthropic} from '../client/runtime/providers/anthropic.js';
+import {createSession as openai} from '../client/runtime/providers/openai.js';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, extra) => {

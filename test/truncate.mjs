@@ -5,10 +5,10 @@
 // max_tokens 16000 很少撞到所以沒露出來, 但串流中途中止會讓它變成常態。
 import express from 'express';
 import assert from 'node:assert';
-import {createSession as createAnthropic} from '../packages/wagent/web/runtime/providers/anthropic.js';
-import {createSession as createOpenAI} from '../packages/wagent/web/runtime/providers/openai.js';
-import {ID} from '../packages/wagent/web/runtime/lderr.js';
-import {LIMIT_TAG} from '../packages/wagent/web/runtime/turn-context.js';
+import {createSession as createAnthropic} from '../client/runtime/providers/anthropic.js';
+import {createSession as createOpenAI} from '../client/runtime/providers/openai.js';
+import {ID} from '../client/runtime/lderr.js';
+import {LIMIT_TAG} from '../client/runtime/turn-context.js';
 
 const ok = (m) => console.log(`  ✓ ${m}`);
 

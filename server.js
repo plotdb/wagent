@@ -64,14 +64,14 @@ const budget = function(req) {
 // 有領域的應用 (資料視覺化、遊戲、表單...) 在這裡代入自己的 prompt;
 // 至於「這個頁面長怎樣、檔案放哪」那種每輪都可能變的事, 走瀏覽器端的
 // registerHost({brief, context}) — 見 web/src/pug/index.ls。
-app.use('/api/agent', require('@plotdb/wagent')({
+app.use('/api/agent', require('./api')({
   log: require('./lib/log'),
   usage: usage, budget: budget
 }));
 
 // 第二個 mount, 代入 dataviz 的 purpose。一台 server 上可以有好幾個應用,
 // 每個有自己的領域 prompt —— 這也是 purpose 唯一該出現的地方。
-app.use('/api/dataviz', require('@plotdb/wagent')({
+app.use('/api/dataviz', require('./api')({
   log: require('./lib/log'),
   purpose: require('./sample/dataviz/prompt'),
   usage: usage, budget: budget
@@ -80,6 +80,10 @@ app.use('/api/dataviz', require('@plotdb/wagent')({
 // sample/ 是「應用」不是「頁面」: 不經 srcbuild, 直接以 ES module 交出去。
 // 頁面在 web/src/pug/ 下, 跟另外兩個 sample 一樣。
 app.use('/sample', express.static('sample'));
+// 這個 repo 就是 @plotdb/wagent, fedep 裝不到自己 —— 前端資產直接從 client/ 給,
+// 掛在使用者 fedep 之後會落的同一個網址 ( {name: '@plotdb/wagent', dir: 'client'} ),
+// sample 頁面的寫法因此跟外部使用者一樣。改了 client/ 也不必重跑 fedep。
+app.use('/assets/lib/@plotdb/wagent/main', express.static('client'));
 app.use('/', express.static('web/static'));
 
 // port 不寫死 —— 0 讓 OS 給一個沒人用的 port (同 @zbryikt/template 的作法:

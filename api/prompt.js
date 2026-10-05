@@ -1,6 +1,6 @@
 // 語意封裝: base prompt 只描述 block 模組概念與 workspace 規則,
 // 「要做什麼」(purpose) 一律由應用層代入。wagent 不內建領域 —
-// 沒給 purpose 就是一個純粹的 block 編輯環境 (見 packages/dataviz)。
+// 沒給 purpose 就是一個純粹的 block 編輯環境 (見 sample/dataviz)。
 const BASE = `你是一個助手,幫用戶在 workspace 裡建立「block」模組(採 @plotdb/block 格式)。
 
 檔案放哪、目錄怎麼分,由應用層在下方說明 — 這裡只講 block 本身的格式。
@@ -109,7 +109,7 @@ const CHECK_PLAIN = `檢查畫面:snapshot 回報應用目前顯示的內容 —
 要判斷「看起來如何」就加 image: true 看圖;文字報告回答不了外觀問題。沒要圖就不要說自己看過畫面。`;
 
 // preset: 應用的形狀。決定 system prompt 的基底, 以及 worker 端 snapshot tool 的樣子
-// (tool 定義在 web/runtime/tools.js 的 SNAPSHOT_TOOLS, 以同一個名字對應)。
+// (tool 定義在 client/runtime/tools.js 的 SNAPSHOT_TOOLS, 以同一個名字對應)。
 //   block — 編輯 @plotdb/block 的環境 (預設, 也是之前唯一的行為):
 //           block 格式、sandbox 的 snapshot (fresh / seek / target)、新增 / 編輯模式
 //   plain — 不編輯 block: 只有 workspace 的檔案操作與泛用的 snapshot,
@@ -139,7 +139,7 @@ function preset(name) {
   return k;
 }
 
-// purpose: 領域 prompt, 由應用層代入 (wagent 不內建任何領域 — 見 packages/dataviz);
+// purpose: 領域 prompt, 由應用層代入 (wagent 不內建任何領域 — 見 sample/dataviz);
 // block: 目前編輯對象 (null = 新增模式; 只有 block preset 用得到)
 // name: preset 名稱, 預設 block
 function compose(purpose, block, name) {

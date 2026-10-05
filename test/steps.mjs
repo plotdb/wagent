@@ -3,9 +3,9 @@
 // 沒有上限的話這個測試會跑到天亮, 那正是要擋的東西。
 import express from 'express';
 import assert from 'node:assert';
-import {createSession as createAnthropic} from '../packages/wagent/web/runtime/providers/anthropic.js';
-import {createSession as createOpenAI} from '../packages/wagent/web/runtime/providers/openai.js';
-import {LIMIT_TAG} from '../packages/wagent/web/runtime/turn-context.js';
+import {createSession as createAnthropic} from '../client/runtime/providers/anthropic.js';
+import {createSession as createOpenAI} from '../client/runtime/providers/openai.js';
+import {LIMIT_TAG} from '../client/runtime/turn-context.js';
 
 const ok = (m) => console.log(`  ✓ ${m}`);
 

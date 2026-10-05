@@ -7,7 +7,7 @@
 // 理由: wagent 的另一半跑在瀏覽器 worker 裡, 而那邊是直接送原始 ES module 出去
 // 的 (沒有打包步驟)。兩邊要用同一組 id, 所以取兩邊都成立的最小交集。
 //
-// **這份與 web/runtime/lderr.js 必須一致** — test/lderr.mjs 會檢查。
+// **這份與 client/runtime/lderr.js 必須一致** — test/lderr.mjs 會檢查。
 // 分成兩份是因為模組系統不同 (這裡 CJS, 那裡 ESM), 不是因為它們可以分岔。
 
 // 100~599 保留給 http code; 1000~ 是 lderror 內建; 10000~29999 保留給自訂。

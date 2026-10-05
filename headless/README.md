@@ -1,6 +1,6 @@
-# @plotdb/wagent-headless
+# @plotdb/wagent/headless
 
-Headless renderer for [@plotdb/wagent](../wagent) — the observation channel
+Headless renderer for [@plotdb/wagent](../README.md) — the observation channel
 (`snapshot`) without a user's browser.
 
 `snapshot` is the one required part of the wagent host contract, and it needs a
@@ -22,7 +22,7 @@ maintain by hand. Don't.
 ## Usage
 
 ```js
-const {createRenderer} = require('@plotdb/wagent-headless');
+const {createRenderer} = require('@plotdb/wagent/headless');
 
 const r = await createRenderer({
   // libraries your blocks expect as globals — an application decision,
@@ -51,12 +51,13 @@ Options: `browser` (reuse one), `launch` (playwright launch options), `scripts`,
 
 ## Install
 
-`playwright` is a peer dependency — the browser binaries are large and whether you
-want them is a deployment decision.
+Part of `@plotdb/wagent`. `playwright` is an optional peer dependency — the browser
+binaries are large and whether you want them is a deployment decision, so it is only
+needed if you require this entry.
 
-    npm i @plotdb/wagent-headless playwright
+    npm i playwright
     npx playwright install chromium
 
 ## Test
 
-    node test.js                       # PW_EXEC=<chromium path> to use an existing build
+    node headless/test.js              # PW_EXEC=<chromium path> to use an existing build

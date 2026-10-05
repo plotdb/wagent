@@ -3,20 +3,61 @@
 An **agent-compatible editing host**: the agent works in a browser-local workspace
 and — this is the part that matters — can see what it renders.
 
-    packages/wagent            the host: api (llm proxy + prompt) + web (runtime, chat, sandbox)
-    packages/wagent-headless   renderer for when no user's browser is present
+The package ( what `files` ships ):
+
+    api/          backend: express router — llm proxy + system prompt   require('@plotdb/wagent')
+    client/       browser: runtime ( agent worker, shell ) + chat / sandbox blocks
+    headless/     renderer for when no user's browser is present        require('@plotdb/wagent/headless')
+
+The rest of the repo is the demo site and its samples:
+
+    server.js                    demo server
     web/src/pug/single-block     sample: one block at /index.html
     web/src/pug/multiple-blocks  sample: blocks/<name>/, with a read-only file tree
     web/src/pug/dataviz          sample page for the application in sample/dataviz
-    sample/dataviz             an application with a domain — data flows to the block as a value
-    context/project/host.md    the design record — read this first
+    sample/dataviz               an application with a domain — data flows to the block as a value
+    lib/                         demo accounts / usage ( an application concern, not wagent's )
+    context/project/host.md      the design record — read this first
+
+## Use it
+
+    npm install github:plotdb/wagent#semver:^0.3.0
+
+Backend - mount the router wherever you like:
+
+    app.use('/api/agent', require('@plotdb/wagent')({preset: 'plain', purpose: '...'}));
+
+options: `purpose` ( domain prompt ), `preset` ( `block` default / `plain` ), `log`,
+`models`, `rate`, `usage`, `budget`, `tune` - see `api/index.js`. LLM keys come from
+env: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` ( `LLM_PROVIDER`, `ANTHROPIC_MODEL`,
+`OPENAI_MODEL` optional ).
+
+Frontend - `client/` is copied into your static assets, e.g. with fedep:
+
+    "frontendDependencies": {"modules": [
+      "@plotdb/esh",
+      {"name": "@plotdb/wagent", "dir": "client"}
+    ]}
+
+which puts it at `/assets/lib/@plotdb/wagent/main/` - the default the runtime looks
+for. Then `import('/assets/lib/@plotdb/wagent/main/runtime/client.js')` and
+`createRuntime({api: '/api/agent', ...})`.
+
+fedep only copies what *you* list, so wagent's own frontend dependencies are yours to
+list too: `@plotdb/esh` always, `@plotdb/block` ( + proxise / semver / csscope /
+rescope ) for the chat / sandbox blocks, `@zumer/snapdom` for sandbox images. They are
+declared as `peerDependencies`.
 
 ## Run the sample
 
     npm install
+    npm run setup                             # fedep: copies frontend deps into web/static
     echo "ANTHROPIC_API_KEY=sk-..." > .env    # or OPENAI_API_KEY
     npm start                                 # random port, opens the browser
                                               # PORT=4000 to pin it, NO_OPEN=1 to not open
+
+`setup` is not a `postinstall` on purpose: that would run in every project that
+installs wagent. `client/` itself is served straight from the repo by `server.js`.
 
 Three samples. The first two differ **only in topology** — wagent knows neither:
 
@@ -47,3 +88,10 @@ every tool run in the browser.
 about 130 lines, commented as a walkthrough. Start there, then read
 `multiple-blocks/index.ls` for the file tree and the `open_block` host tool.
 (`index.pug` is markup only, `index.styl` is styling; both are pulled in with `include`.)
+
+## Release
+
+    npm run release                           # npx fedep publish -g --skip-dist
+
+publishes `files` to the `release` branch and tags it `dist/vX.Y.Z` / `vX.Y.Z`
+( the source commit gets `src/vX.Y.Z` ). Bump `version` and `CHANGELOG.md` first.

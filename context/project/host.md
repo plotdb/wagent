@@ -210,7 +210,8 @@ workspace 存在。sandbox 那塊程式碼因此一行都不用改 —— 它本
 兩個應用層窗口。
 
 **打包:** headless 依賴瀏覽器本體(數百 MB),不能是 `@plotdb/wagent` 的必要相依。
-獨立套件 + `playwright` 列 peer,由使用情境決定裝不裝。
+以獨立的 entry 提供 ( `require('@plotdb/wagent/headless')` ),`playwright` 列為 optional peer,
+由使用情境決定裝不裝 —— 不 require 這個 entry 就用不到它。
 
 **已知待驗:** headless 對背景頁的節流行為與一般分頁不同,而我們已經有一條
 「背景分頁凍結 rAF」的提示。headless 下該調哪些 flag、那條提示還準不準,要實測。
@@ -270,7 +271,7 @@ preset 把「這是哪一種應用」變成一個選項:
    「報告裡有什麼」交給應用的 `brief` 說明。`fresh` / `time` / `target` 是 sandbox 的概念,
    留著的話模型會去傳, 而 host 根本不認得
 
-**只在 api 決定一次。** prompt 在後端、tool 定義在前端 (`web/runtime/tools.js`),
+**只在 api 決定一次。** prompt 在後端、tool 定義在前端 (`client/runtime/tools.js`),
 兩邊以 preset 名稱對應: `GET /prompt` 回 `{system, preset}`, worker 用 `toolsFor(preset)` 取 tool。
 不讓前端另外指定, 是因為兩邊各自設定就會出現「prompt 是 plain、tool 是 block」這種組合,
 而且不會報錯。preset 打錯字在**掛載時**就丟錯, 不等到第一次對話。
@@ -350,7 +351,7 @@ sandbox 的 `mount()` 與切換選單),已經全部移到應用層。sandbox 因
 
 prompt 那側也一樣:`BASE` 只講 block 的**檔案格式**,不講它放哪;
 `compose()` 只說「正在編輯 block 甲」,不拼路徑。目錄約定由應用層寫在 `brief` / `purpose`
-(見 `packages/dataviz/prompt.js` 與 `packages/dataviz/web/blocks.js`)。
+(見 `sample/dataviz/prompt.js` 與 `sample/dataviz/blocks.js`)。
 
 > 註:server 模式的 `wsenv.listBlocks()` 與 `/blocks` route 仍留著同樣的假設。
 > 那條路徑目前只有舊的 refactor-0809 demo 在用,拆掉會動到它,尚未處理。
@@ -494,7 +495,7 @@ output 很長而中途超出的情況,proxy 會**中止上游並往串流裡注�
 `demo-alice` / `demo-bob` / `demo-tight`(故意給很少)/ `demo-zero`(已用完)。
 用 `x-wagent-account` header 指定(走 `createRuntime` 的 `headers`),`/api/usage` 查詢。
 
-**這一份刻意放在 repo 根目錄的 `lib/` 而不是 `packages/wagent`** —— 認證方式、帳戶
+**這一份刻意放在 repo 根目錄的 `lib/` 而不是套件裡 ( `api/` )** —— 認證方式、帳戶
 形狀、存在哪、怎麼查,全是 caller 的事。wagent 只負責把數字算出來。
 
 

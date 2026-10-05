@@ -1,4 +1,4 @@
-// @plotdb/wagent-headless — 沒有使用者在場時的觀察通道。
+// @plotdb/wagent/headless — 沒有使用者在場時的觀察通道。
 //
 // snapshot 是 host 契約裡唯一必要的那塊, 而它需要一個 renderer。Node 沒有 DOM,
 // 所以「wagent 在 Node 上跑」若不解決這件事, 得到的是一個看不見自己成果的 agent。
@@ -37,12 +37,10 @@ function resolveFrom(spec, from) {
 // 對外提供操作 api」。視覺層 (index.html: 下拉選單 + 重繪鈕) 在這裡用不到。
 function sandboxBasePath(opt) {
   if(opt && opt.sandbox) { return opt.sandbox; }
-  const pkg = resolveFrom('@plotdb/wagent/package.json');
-  if(pkg) { return path.join(path.dirname(pkg), 'web/block/sandbox/base.html'); }
-  // 同一個 repo 內開發時的相對位置
-  const local = path.resolve(__dirname, '../wagent/web/block/sandbox/base.html');
+  // 同一個套件裡, 不必再從 node_modules 找 @plotdb/wagent
+  const local = path.join(__dirname, '..', 'client', 'block', 'sandbox', 'base.html');
   if(fs.existsSync(local)) { return local; }
-  throw new Error('找不到 @plotdb/wagent 的 sandbox/base.html — 用 {sandbox: <path>} 指定');
+  throw new Error('找不到 sandbox/base.html — 用 {sandbox: <path>} 指定');
 }
 
 const PAGE = `<!doctype html>
@@ -61,7 +59,7 @@ const PAGE = `<!doctype html>
  *   opt.launch    傳給 chromium.launch 的選項
  *   opt.scripts   額外要注入頁面的 script 檔案路徑或 URL (Chart.js / d3 之類) —
  *                 這是**應用層**的事, wagent 不內建任何函式庫
- *   opt.sandbox   sandbox/base.html 的路徑 (預設從 @plotdb/wagent 解析)
+ *   opt.sandbox   sandbox/base.html 的路徑 (預設是本套件的 client/block/sandbox/base.html)
  *   opt.width / opt.height   viewport 預設值
  */
 async function createRenderer(opt) {
@@ -71,7 +69,7 @@ async function createRenderer(opt) {
   catch(e) {
     try { playwright = require('playwright-core'); }
     catch(e2) {
-      throw new Error('@plotdb/wagent-headless 需要 playwright (peer dependency): npm i playwright');
+      throw new Error('@plotdb/wagent/headless 需要 playwright (peer dependency): npm i playwright');
     }
   }
 

@@ -8,7 +8,7 @@ const proxy = require('./proxy');
 //   app.use('/api/agent', require('@plotdb/wagent')({purpose: '...'}))
 //
 // **後端只做三件事**: 轉發 LLM 請求 (注入 key)、給 system prompt、報告用哪個 provider。
-// agent loop、workspace、tool 執行全部在瀏覽器 (見 web/runtime/agent-worker.js) —
+// agent loop、workspace、tool 執行全部在瀏覽器 (見 client/runtime/agent-worker.js) —
 // 所以這裡沒有 workspace 目錄, 也沒有任何 LLM SDK 相依。
 //
 // opt.purpose:   領域 prompt, 由應用層提供 (wagent 不內建領域;
@@ -31,8 +31,8 @@ module.exports = function(opt) {
   const router = express.Router();
 
   // 前端資產: block (chat / sandbox) 與 runtime (browser agent worker)
-  router.use('/block', express.static(path.join(__dirname, '..', 'web', 'block')));
-  router.use('/runtime', express.static(path.join(__dirname, '..', 'web', 'runtime')));
+  router.use('/block', express.static(path.join(__dirname, '..', 'client', 'block')));
+  router.use('/runtime', express.static(path.join(__dirname, '..', 'client', 'runtime')));
 
   // browser 端 agent loop 用的 llm proxy — 後端唯一暴露的能力面
   router.post('/llm/:provider', proxy({

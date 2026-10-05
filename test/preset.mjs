@@ -9,10 +9,10 @@
  * 跑: node test/preset.mjs
  */
 import {createRequire} from 'module';
-import {toolsFor, SNAPSHOT_TOOLS, snapshotTool, plainSnapshotTool, tools} from '../packages/wagent/web/runtime/tools.js';
+import {toolsFor, SNAPSHOT_TOOLS, snapshotTool, plainSnapshotTool, tools} from '../client/runtime/tools.js';
 
 const require = createRequire(import.meta.url);
-const prompt = require('../packages/wagent/api/prompt.js');
+const prompt = require('../api/prompt.js');
 
 let pass = 0, fail = 0;
 const ok = (name, cond, extra) => {

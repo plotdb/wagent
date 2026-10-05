@@ -12,7 +12,7 @@ import assert from 'node:assert';
 import {createRequire} from 'node:module';
 
 const require = createRequire(import.meta.url);
-const wagent = require('../packages/wagent/api/index.js');
+const wagent = require('../api/index.js');
 const makeAccounts = require('../lib/accounts.js');
 
 const ok = (m) => console.log(`  ✓ ${m}`);
@@ -60,7 +60,7 @@ const up = await new Promise((r) => { const s = upstream.listen(0, () => r(s)); 
 const upUrl = `http://127.0.0.1:${up.address().port}`;
 
 // upstream 指到假的那台
-const providers = require('../packages/wagent/api/proxy.js').providers;
+const providers = require('../api/proxy.js').providers;
 providers.anthropic.url = `${upUrl}/v1/messages`;
 providers.openai.url = `${upUrl}/v1/chat/completions`;
 process.env.ANTHROPIC_API_KEY = 'test-key';

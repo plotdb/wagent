@@ -82,7 +82,7 @@ try {
   persist = `in-memory (掛載失敗: ${e.message})`;
 }
 
-// workspace 的初始內容由**應用層**植入 (見 packages/dataviz/web/seed.js):
+// workspace 的初始內容由**應用層**植入 (見 sample/dataviz/seed.js):
 // 種什麼範例、要不要種, 都是領域決定 — 一個拿 wagent 做遊戲的人不需要長條圖。
 await sh.run(`mkdir -p ${WORKSPACE}`);
 await sh.run(`cd ${WORKSPACE}`);

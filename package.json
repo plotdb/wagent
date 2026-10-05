@@ -1,19 +1,38 @@
 {
-  "name": "wagent-workspace",
-  "private": true,
+  "name": "@plotdb/wagent",
   "version": "0.3.0",
-  "description": "@plotdb/wagent — monorepo 與 demo 頁面",
-  "workspaces": [
-    "packages/*"
+  "description": "agent-compatible editing host: the agent works in a browser-local workspace and can see what it renders",
+  "main": "api/index.js",
+  "files": [
+    "api/",
+    "client/",
+    "headless/index.js",
+    "headless/README.md",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "start": "node server.js",
+    "setup": "fedep",
     "log": "tail -n 100 -f logs/server.log",
     "test": "node test/node-esh.mjs && node test/nudge.mjs && node test/steps.mjs && node test/truncate.mjs && node test/lderr.mjs && node test/budget.mjs && node test/usage.mjs && node test/preset.mjs",
-    "postinstall": "fedep"
+    "release": "npx fedep publish -g --skip-dist"
   },
   "license": "MIT",
   "dependencies": {
+    "express": "^5.2.1"
+  },
+  "peerDependencies": {
+    "@plotdb/block": ">=5.7.3",
+    "@plotdb/esh": ">=0.5.1",
+    "@zumer/snapdom": ">=2.24.1",
+    "playwright": ">=1.40.0"
+  },
+  "peerDependenciesMeta": {
+    "@zumer/snapdom": {"optional": true},
+    "playwright": {"optional": true}
+  },
+  "devDependencies": {
     "@plotdb/block": "^5.7.3",
     "@plotdb/csscope": "^5.0.4",
     "@plotdb/esh": "^0.5.1",
@@ -22,14 +41,11 @@
     "@plotdb/sheet": "^0.7.1",
     "@plotdb/srcbuild": "^0.0.70",
     "@zumer/snapdom": "^2.24.1",
-    "express": "^5.2.1",
     "fedep": "^1.7.4",
+    "livescript": "^1.6.0",
+    "playwright-core": "^1.62.1",
     "proxise": "^1.0.1",
     "stylus": "^0.64.0"
-  },
-  "devDependencies": {
-    "livescript": "^1.6.0",
-    "playwright-core": "^1.62.1"
   },
   "frontendDependencies": {
     "root": "web/static/assets/lib",
@@ -41,10 +57,6 @@
       "proxise",
       "@plotdb/esh",
       "@zumer/snapdom",
-      {
-        "name": "@plotdb/wagent",
-        "dir": "web"
-      },
       "@plotdb/sheet"
     ]
   }
