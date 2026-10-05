@@ -46,7 +46,8 @@ for. Then `import('/assets/lib/@plotdb/wagent/main/runtime/client.js')` and
 fedep only copies what *you* list, so wagent's own frontend dependencies are yours to
 list too: `@plotdb/esh` always, `@plotdb/block` ( + proxise / semver / csscope /
 rescope ) for the chat / sandbox blocks, `@zumer/snapdom` for sandbox images. They are
-declared as `peerDependencies`.
+declared as `peerDependencies`; all but `@plotdb/esh` are optional, since a page that
+only uses the runtime ( no chat / sandbox block ) needs none of them.
 
 ## Run the sample
 
