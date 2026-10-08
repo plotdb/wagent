@@ -114,9 +114,41 @@ export function createRuntime(opt) {
     };
   }
 
+  // 模型切換。worker 持有目前的選擇 (每輪開始時套用), 這裡只是請求與通知。
+  const modelPending = {};
+  const modelListeners = [];
+  function modelCall(msg) {
+    const id = prefix + 'm' + (++seq);
+    return new Promise(function(resolve, reject) {
+      modelPending[id] = {resolve: resolve, reject: reject};
+      worker.postMessage(Object.assign({id: id}, msg));
+    });
+  }
+  function onModelChange(fn) {
+    if(typeof fn !== 'function') { return function() {}; }
+    modelListeners.push(fn);
+    return function() {
+      const i = modelListeners.indexOf(fn);
+      if(i >= 0) { modelListeners.splice(i, 1); }
+    };
+  }
+
   // worker 的 postMessage 是廣播: 一律以 id 過濾出自己的訊息
   worker.addEventListener('message', function(ev) {
     const msg = ev.data || {};
+    if(msg.type === 'model-change') {
+      const info = {provider: msg.provider || null, model: msg.model || null};
+      modelListeners.forEach(function(fn) {
+        try { fn(info); } catch(e) { console.error('model-change listener failed', e); }
+      });
+      return;
+    }
+    if(msg.type === 'model-result') {
+      const mp = modelPending[msg.id];
+      if(!mp) { return; }
+      delete modelPending[msg.id];
+      return msg.ok ? mp.resolve(msg) : mp.reject(new Error(msg.error));
+    }
     if(msg.type === 'fs-change') {
       const info = {paths: msg.paths || null};
       fsListeners.forEach(function(fn) {
@@ -225,6 +257,25 @@ export function createRuntime(opt) {
         setAgentRoot: function(path) {
           worker.postMessage({type: 'agent-root', root: path});
         },
+        // 對話中換模型 (見 README「模型切換」)。下一輪生效, 對話不清。
+        //   listModels({refresh}) -> {current, default, providers: {<name>: {model, models}}}
+        //   getModel()            -> {provider, model} 目前會用的
+        //   setModel({provider, model}) -> {provider, model}; 只給 model 會自己找 provider,
+        //                            只給 provider 用它的預設 model, null 回到後端預設。
+        //                            不在後端白名單內就 reject
+        //   onModelChange(fn)     -> 取消函式; fn({provider, model})
+        listModels: function(opt) {
+          return modelCall({type: 'model-list', refresh: !!(opt && opt.refresh)}).then(function(r) {
+            return {current: r.current, default: r.default, providers: r.providers};
+          });
+        },
+        getModel: function() {
+          return modelCall({type: 'model-list'}).then(function(r) { return r.current; });
+        },
+        setModel: function(m) {
+          return modelCall({type: 'model-set', model: m || null}).then(function(r) { return r.current; });
+        },
+        onModelChange: onModelChange,
         root: o.root, workerUrl: url
       };
     });

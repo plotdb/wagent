@@ -1,5 +1,21 @@
 # Change Logs
 
+## v0.3.1
+
+ - features:
+   - 每個掛載點自己的模型設定 —— `require('@plotdb/wagent')({provider, model, models})`,env 退為 fallback
+     - `models` 是該掛載點的白名單 ( 取代預設;`false` / `[]` = 不開放該 provider ),預設白名單以 `wagent.models` 匯出供擴充
+     - 預設 model ( 含 env 設的 ) 一律放行 —— `ANTHROPIC_MODEL` 設成白名單沒有的新模型不再全部失敗
+     - proxy:body 沒帶 model 就填預設;關掉的 provider 回 404
+     - `GET /provider` 多回 `providers: {<name>: {model, models}}` ( 只列有 key 的 ),`provider` / `model` 不變
+   - 對話中切換模型:`rt.listModels()` / `rt.getModel()` / `rt.setModel({provider, model})` / `rt.onModelChange(fn)`
+     - 下一輪生效,不清對話;同 provider 直接沿用歷史,跨 provider ( anthropic ↔ openai ) 轉換對話紀錄後重建 session
+   - 預設白名單加入 Claude 5 家族 ( `claude-opus-5-5`、`claude-opus-5`、`claude-sonnet-5`、`claude-fable-5-1`、
+     `claude-fable-5`、`claude-haiku-4-5-20251001`、`claude-opus-4-6` ),舊的保留
+ - fixes:
+   - haiku 4.5 與更早的 Claude 不支援 adaptive thinking,不再對它們送 `thinking` ( 先前會 400 )
+   - worker 取 `/provider` 時也帶 `headers`
+
 ## v0.3.0
 
  - packaging:

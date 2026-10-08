@@ -22,7 +22,11 @@ const PROVIDERS = {
         'anthropic-version': '2023-06-01'
       };
     },
-    models: ['claude-opus-4-8', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5']
+    models: [
+      'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-fable-5-1', 'claude-fable-5',
+      'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
+      'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6'
+    ]
   },
   openai: {
     url: 'https://api.openai.com/v1/chat/completions',
@@ -48,7 +52,8 @@ function makeLimiter(opt) {
   };
 }
 
-// opt.models: 覆寫白名單 {anthropic: [...], openai: [...]}; opt.rate: {max, windowMs}
+// opt.models / opt.provider / opt.model: 這個掛載點可用的模型與預設值, 見 config()
+// opt.rate:   {max, windowMs}
 // opt.usage:  function(record) — 每次呼叫結束後的用量。**不給就完全不記帳**,
 //             行為與先前一字不差 (同 sandbox 的 adapt / source / list 那條判準:
 //             帳戶與額度是應用層的領域知識, wagent 不知道也不該替它決定)。
@@ -63,11 +68,12 @@ module.exports = function(opt) {
   const limiter = makeLimiter(opt.rate || {});
   const onUsage = typeof opt.usage === 'function' ? opt.usage : null;
   const budgetOf = typeof opt.budget === 'function' ? opt.budget : null;
+  const cfg = opt.config || config(opt);
 
   return function(req, res) {
     const name = req.params.provider;
     const p = PROVIDERS[name];
-    if(!p) { return res.status(404).json({error: `unknown provider: ${name}`}); }
+    if(!p || !cfg.enabled(name)) { return res.status(404).json({error: `unknown provider: ${name}`}); }
     const key = p.key();
     if(!key) { return res.status(503).json({error: `no api key for ${name}`}); }
     // 490 + lderror body: lderror 的 id 空間跟 HTTP 4xx/5xx 沒有一對一關係,
@@ -78,8 +84,9 @@ module.exports = function(opt) {
     }
 
     const body = req.body || {};
-    const allow = (opt.models || {})[name] || p.models;
-    if(body.model && allow.indexOf(body.model) < 0) {
+    // 沒帶 model 就填這個掛載點的預設 —— 先前是原樣轉發, 由上游回一個看不懂的 400
+    if(!body.model) { body.model = cfg.model(name); }
+    if(cfg.allow(name).indexOf(body.model) < 0) {
       return res.status(400).json({error: `model not allowed: ${body.model}`});
     }
 
@@ -243,22 +250,64 @@ module.exports.providers = PROVIDERS;
 
 // 目前會用哪個 provider / model。挑法與 proxy 的 key 查找一致 —
 // 兩邊分開就會出現「畫面說 anthropic, 實際打 openai」這種分岔。
-// LLM_PROVIDER 可指定; 否則取第一個有 key 的。
 const DEFAULT_MODEL = {anthropic: 'claude-opus-4-8', openai: 'gpt-5'};
 const ENV_MODEL = {anthropic: 'ANTHROPIC_MODEL', openai: 'OPENAI_MODEL'};
 
-module.exports.info = function() {
-  const want = process.env.LLM_PROVIDER;
+// 每個掛載點自己的模型設定。env 只是 fallback, 而且每次都現讀 (應用可能在掛載後才填 env)。
+//   models:   {anthropic: [...], openai: [...]} 取代該 provider 的預設白名單;
+//             false 或 [] = 這個掛載點不開放該 provider。要擴充就拿 module.exports.models 去 concat
+//   provider: 預設 provider (其次 LLM_PROVIDER, 再其次第一個有 key 的)
+//   model:    預設 model。字串 = 給預設 provider; {anthropic, openai} = 各自的預設
+//             (其次 ANTHROPIC_MODEL / OPENAI_MODEL, 再其次 DEFAULT_MODEL)
+// 預設 model 一律在白名單內: 那是管理者選的, 被自己的白名單擋掉 (先前 env 設新模型就是這樣全滅) 沒有意義。
+function config(opt) {
+  opt = opt || {};
+  const models = opt.models || {};
+  if(opt.provider && !PROVIDERS[opt.provider]) { throw new Error(`unknown provider: ${opt.provider}`); }
+  Object.keys(models).forEach(function(n) {
+    if(!PROVIDERS[n]) { throw new Error(`unknown provider in models: ${n}`); }
+  });
   const names = Object.keys(PROVIDERS);
-  let name = null;
-  if(want) {
-    if(!PROVIDERS[want]) { throw new Error(`unknown LLM_PROVIDER: ${want}`); }
-    name = PROVIDERS[want].key() ? want : null;
-  } else {
-    name = names.find(function(n) { return !!PROVIDERS[n].key(); }) || null;
-  }
-  return {
-    provider: name,
-    model: name ? (process.env[ENV_MODEL[name]] || DEFAULT_MODEL[name]) : null
+  const enabled = function(n) {
+    return !!PROVIDERS[n] && models[n] !== false && !(Array.isArray(models[n]) && !models[n].length);
   };
-};
+  const list = function(n) { return Array.isArray(models[n]) ? models[n] : PROVIDERS[n].models; };
+  // 字串 model 屬於哪個 provider: 有明講就是它, 否則看誰的白名單有, 再不然看名字
+  const owner = typeof opt.model === 'string' ? (opt.provider || names.find(function(n) {
+    return list(n).indexOf(opt.model) >= 0;
+  }) || (/^claude-/.test(opt.model) ? 'anthropic' : 'openai')) : null;
+  const model = function(n) {
+    if(typeof opt.model === 'string' && n === owner) { return opt.model; }
+    if(opt.model && typeof opt.model === 'object' && opt.model[n]) { return opt.model[n]; }
+    return process.env[ENV_MODEL[n]] || DEFAULT_MODEL[n];
+  };
+  const allow = function(n) {
+    if(!enabled(n)) { return []; }
+    const l = list(n).slice();
+    const m = model(n);
+    if(m && l.indexOf(m) < 0) { l.unshift(m); }
+    return l;
+  };
+  const available = function(n) { return enabled(n) && !!PROVIDERS[n].key(); };
+  const info = function() {
+    const want = opt.provider || process.env.LLM_PROVIDER;
+    let name = null;
+    if(want) {
+      if(!PROVIDERS[want]) { throw new Error(`unknown LLM_PROVIDER: ${want}`); }
+      name = available(want) ? want : null;
+    } else {
+      name = names.find(available) || null;
+    }
+    // 只列有 key 的: 前端的選單不該出現按了必失敗的選項
+    const providers = {};
+    names.filter(available).forEach(function(n) { providers[n] = {model: model(n), models: allow(n)}; });
+    return {provider: name, model: name ? model(name) : null, providers: providers};
+  };
+  return {enabled: enabled, allow: allow, model: model, info: info};
+}
+
+module.exports.config = config;
+module.exports.models = {};
+Object.keys(PROVIDERS).forEach(function(n) { module.exports.models[n] = PROVIDERS[n].models.slice(); });
+// 0.3.0 的介面: 只看 env 的那一份
+module.exports.info = function() { return config({}).info(); };

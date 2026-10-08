@@ -16,7 +16,10 @@ const proxy = require('./proxy');
 // opt.preset:    應用的形狀, 'block' (預設) 或 'plain' (不編輯 block 的應用)。
 //                決定 system prompt 的基底與 snapshot tool 的樣子, 見 api/prompt.js
 // opt.log:       logger function(tag, msg)
-// opt.models:    覆寫各 provider 的 model 白名單
+// opt.provider:  預設 provider ('anthropic' / 'openai'); 不給就看 env LLM_PROVIDER
+// opt.model:     預設 model, 字串或 {anthropic, openai}; 不給就看 env ANTHROPIC_MODEL / OPENAI_MODEL
+// opt.models:    各 provider 的 model 白名單 {anthropic: [...], openai: [...]} (取代預設;
+//                false / [] = 不開放)。前端只能在這裡面切換。見 proxy.js 的 config()
 // opt.rate:      proxy 的 rate limit {max, windowMs}
 // opt.usage:     function(record) — 每次 LLM 呼叫的用量 (見 proxy.js / meter.js)。
 //                不給就不記帳; 帳戶與額度是應用層的事, wagent 只負責把數字算出來。
@@ -28,6 +31,8 @@ module.exports = function(opt) {
   const log = opt.log || function() {};
   const purpose = opt.purpose || '';
   const preset = prompt.preset(opt.preset);
+  // 模型設定只在掛載點決定一次, proxy 的白名單與 /provider 的回報共用它
+  const models = proxy.config(opt);
   const router = express.Router();
 
   // 前端資產: block (chat / sandbox) 與 runtime (browser agent worker)
@@ -36,11 +41,12 @@ module.exports = function(opt) {
 
   // browser 端 agent loop 用的 llm proxy — 後端唯一暴露的能力面
   router.post('/llm/:provider', proxy({
-    log: log, models: opt.models, rate: opt.rate,
+    log: log, config: models, rate: opt.rate,
     usage: opt.usage, budget: opt.budget, tune: opt.tune
   }));
 
-  router.get('/provider', (req, res) => { res.json(proxy.info()); });
+  // {provider, model, providers: {<name>: {model, models}}} — 前端的模型選單由此而來
+  router.get('/provider', (req, res) => { res.json(models.info()); });
 
   // system prompt 只留一份, 在後端 (前端改不動, 也不必重複維護)。
   // preset 一併回傳: worker 依它挑 snapshot tool 的定義 —— tool 定義在前端,
@@ -53,3 +59,5 @@ module.exports = function(opt) {
 };
 
 module.exports.prompt = prompt;
+// 預設白名單, 要擴充時用: wagent({models: {anthropic: wagent.models.anthropic.concat([...])}})
+module.exports.models = proxy.models;

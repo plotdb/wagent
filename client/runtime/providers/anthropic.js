@@ -31,11 +31,17 @@ function pruneImages(history) {
   }
 }
 
+// adaptive thinking 只有 4.6 以後的模型收; haiku 4.5 / 4.5 以前送了會 400, 那些就不開 thinking
+const OLD_THINKING = /^claude-(3|haiku-4|(opus|sonnet)-4(-[0-5])?(-\d{8})?$)/;
+export function thinkingFor(model) {
+  return OLD_THINKING.test(model || '') ? null : {type: 'adaptive'};
+}
+
 // browser 版 provider; 介面同 openai.js (見該檔說明)
 // maxSteps / softSteps: 一輪之內的模型呼叫上限, 見 turn-context.js 的 wrapLimit。
 // 由應用層決定 (createRuntime -> worker -> 這裡); 預設值是估的, 不是量的 —
 // 要調到對得先有 proxy 那邊的用量記錄。
-export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps}) {
+export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, history: seed}) {
   const url = (api || '/api/agent') + '/llm/anthropic';
   // 連續截斷幾次就放棄。跟 chat 的 maxOffer 是同一類東西: 重試要有上限,
   // 否則「每次都截斷」會變成另一種跑不完的迴圈。
@@ -45,7 +51,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
   const toolDefs = tools.map(function(t) {
     return {name: t.name, description: t.description, input_schema: t.parameters};
   });
-  let history = [];
+  let history = Array.isArray(seed) ? seed.slice() : [];
 
   // streaming 時把 content_block_* 事件組回完整 content 陣列
   function streamMessage(r, cb) {
@@ -96,11 +102,12 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
     const params = {
       model: model || 'claude-opus-4-8',
       max_tokens: 16000,
-      thinking: {type: 'adaptive'},
       system: [{type: 'text', text: system, cache_control: {type: 'ephemeral'}}],
       tools: toolDefs,
       messages: history
     };
+    const thinking = thinkingFor(params.model);
+    if(thinking) { params.thinking = thinking; }
     if(cb && cb.onDelta) { params.stream = true; }
     return fetch(url, {
       method: 'POST',
@@ -218,6 +225,11 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
 
   return {
     send: send,
-    reset: function() { history = []; }
+    reset: function() { history = []; },
+    // 對話中換模型: 同一個 provider 的歷史直接沿用 (別的模型的 thinking block 上游會略過)
+    format: 'anthropic',
+    setModel: function(m) { model = m; },
+    getModel: function() { return model; },
+    getHistory: function() { return history; }
   };
 }
