@@ -219,7 +219,7 @@ Promise.all [window.wagentRuntime, window.dataviz]
 
       show 'sample-bar'
       create {name: wagent, path: 'block/chat/index.html'}, document.getElementById(\chat-root),
-        {api, block: 'sample-bar', sandbox: sb, transport: rt.transport}
+        {api, block: 'sample-bar', sandbox: sb, transport: rt.transport, models: rt}
       .then (c) ->
         chat := c
         # 一輪跑完更新餘額。掛 'busy' 而不是 'reply': busy 轉 false 在成功與

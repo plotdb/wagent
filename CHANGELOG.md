@@ -10,6 +10,7 @@
      - `GET /provider` 多回 `providers: {<name>: {model, models}}` ( 只列有 key 的 ),`provider` / `model` 不變
    - 對話中切換模型:`rt.listModels()` / `rt.getModel()` / `rt.setModel({provider, model})` / `rt.onModelChange(fn)`
      - 下一輪生效,不清對話;同 provider 直接沿用歷史,跨 provider ( anthropic ↔ openai ) 轉換對話紀錄後重建 session
+     - chat block 的 `data.models` ( 傳 runtime ):header 的 provider 文字換成模型選單;sample 皆已接上
    - 預設白名單加入 Claude 5 家族 ( `claude-opus-5-5`、`claude-opus-5`、`claude-sonnet-5`、`claude-fable-5-1`、
      `claude-fable-5`、`claude-haiku-4-5-20251001`、`claude-opus-4-6` ),舊的保留
  - fixes:

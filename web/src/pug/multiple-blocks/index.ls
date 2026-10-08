@@ -214,7 +214,7 @@ window.wagentRuntime
             .catch -> {openedBlock: current, blocks: [], files: []}
 
       show seed-name
-      chat-opt = {api, block: seed-name, sandbox: sb, transport: rt.transport}
+      chat-opt = {api, block: seed-name, sandbox: sb, transport: rt.transport, models: rt}
       create {name: wagent, path: 'block/chat/index.html'}, document.getElementById('chat-root'), chat-opt
       .then (c) -> chat := c
 

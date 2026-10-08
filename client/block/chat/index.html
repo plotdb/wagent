@@ -6,6 +6,7 @@
         <input type="checkbox" checked><span>出錯自動修</span>
       </label>
       <span class="rc-chat-provider"></span>
+      <select class="rc-chat-model" title="模型 ( 下一輪起生效, 對話不清 )" hidden></select>
     </span>
   </div>
   <div class="rc-chat-log"></div>
@@ -22,6 +23,7 @@
     .rc-chat-autofix { font-size: 11px; color: #888; white-space: nowrap; display: flex; align-items: center; gap: 3px; cursor: pointer; user-select: none; }
     .rc-chat-autofix input { margin: 0; cursor: pointer; }
     .rc-chat-provider { font-size: 11px; color: #999; white-space: nowrap; }
+    .rc-chat-model { font-size: 11px; color: #555; max-width: 180px; border: 1px solid #ddd; border-radius: 4px; background: #fff; }
     .rc-chat-log { flex: 1; overflow-y: auto; padding: 12px; }
     .rc-msg { margin-bottom: 10px; max-width: 92%; padding: 8px 12px; border-radius: 10px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
     .rc-msg.user { background: #2b6cb0; color: #fff; margin-left: auto; }
@@ -58,6 +60,7 @@
         var title = root.querySelector('.rc-chat-title');
         var providerEl = root.querySelector('.rc-chat-provider');
         var autoFixEl = root.querySelector('.rc-chat-autofix input');
+        var modelEl = root.querySelector('.rc-chat-model');
         var thinking = null;
         var queued = [];   // 已經收下、還沒送進 agent 的發話 (畫面上的節點)
 
@@ -167,9 +170,42 @@
           base.autoFix(autoFixEl.checked);
           addMsg('event', autoFixEl.checked ? '出錯時會自動請 agent 修' : '出錯時只會提議,按了才送');
         });
-        base.provider().then(function(j) {
-          providerEl.textContent = j.provider ? j.provider + ' / ' + j.model : '未設定 API key (.env)';
-        });
+        var models = base.models && base.models();
+        if(models) {
+          // 選項的 value 是 "provider/model"; model 名稱本身不含 "/"
+          var pick = function(c) { if(c) { modelEl.value = c.provider + '/' + c.model; } };
+          models.listModels().then(function(r) {
+            var names = Object.keys(r.providers || {});
+            if(!names.length) { providerEl.textContent = '未設定 API key (.env)'; return; }
+            names.forEach(function(name) {
+              var g = document.createElement('optgroup');
+              g.label = name;
+              (r.providers[name].models || []).forEach(function(m) {
+                var o = document.createElement('option');
+                o.value = name + '/' + m;
+                o.textContent = m;
+                g.appendChild(o);
+              });
+              modelEl.appendChild(g);
+            });
+            modelEl.hidden = false;
+            pick(r.current);
+          });
+          modelEl.addEventListener('change', function() {
+            var v = modelEl.value.split('/');
+            models.setModel({provider: v[0], model: v.slice(1).join('/')})
+              .then(function(c) { addMsg('event', '下一輪起使用 ' + c.provider + ' / ' + c.model); })
+              .catch(function(e) {
+                addMsg('error', '換模型失敗: ' + ((e && e.message) || e));
+                models.getModel().then(pick);
+              });
+          });
+          models.onModelChange(pick);
+        } else {
+          base.provider().then(function(j) {
+            providerEl.textContent = j.provider ? j.provider + ' / ' + j.model : '未設定 API key (.env)';
+          });
+        }
         input.focus();
       },
       interface: function() { return this.base; }

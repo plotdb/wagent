@@ -131,7 +131,7 @@ window.wagent-runtime
 
       sb.show file
       create {name: wagent, path: 'block/chat/index.html'}, document.getElementById('chat-root'), do
-        api: api, block: file, sandbox: sb, transport: rt.transport
+        api: api, block: file, sandbox: sb, transport: rt.transport, models: rt
 
   .catch (e) ->
     document.body.text-content = '初始化失敗: ' + e.message
