@@ -28,9 +28,9 @@ Backend - mount the router wherever you like:
     app.use('/api/agent', require('@plotdb/wagent')({preset: 'plain', purpose: '...'}));
 
 options: `purpose` ( domain prompt ), `preset` ( `block` default / `plain` ), `log`,
-`models`, `rate`, `usage`, `budget`, `tune` - see `api/index.js`. LLM keys come from
-env: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` ( `LLM_PROVIDER`, `ANTHROPIC_MODEL`,
-`OPENAI_MODEL` optional ).
+`provider`, `model`, `models`, `rate`, `usage`, `budget`, `tune` - see `api/index.js`.
+LLM keys come from env: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Which model to use is
+per mount ( below ); `LLM_PROVIDER`, `ANTHROPIC_MODEL`, `OPENAI_MODEL` are the fallback.
 
 Frontend - `client/` is copied into your static assets, e.g. with fedep:
 
@@ -48,6 +48,56 @@ list too: `@plotdb/esh` always, `@plotdb/block` ( + proxise / semver / csscope /
 rescope ) for the chat / sandbox blocks, `@zumer/snapdom` for sandbox images. They are
 declared as `peerDependencies`; all but `@plotdb/esh` are optional, since a page that
 only uses the runtime ( no chat / sandbox block ) needs none of them.
+
+## Models
+
+Each mount decides which models its frontend may use, and the default:
+
+    require('@plotdb/wagent')({
+      provider: 'anthropic',                    // default provider ( else LLM_PROVIDER, else the first with a key )
+      model: 'claude-opus-5-5',                 // default model; or {anthropic: '...', openai: '...'}
+                                                // ( else ANTHROPIC_MODEL / OPENAI_MODEL, else built-in )
+      models: {                                 // allow-list per provider, replaces the built-in one
+        anthropic: ['claude-sonnet-5', 'claude-haiku-4-5'],
+        openai: false                           // false or [] = not offered on this mount
+      }
+    })
+
+ - the default model is always allowed, so setting `ANTHROPIC_MODEL` to a model the
+   list doesn't know no longer breaks every call.
+ - to extend instead of replace: `models: {anthropic: wagent.models.anthropic.concat(['...'])}`.
+ - the proxy rejects ( 400 ) a `model` outside the mount's list, fills the default when
+   the body has none, and 404s a provider the mount turned off.
+ - with none of these options, behaviour is that of 0.3.0.
+
+`GET <mount>/provider` - the menu for the frontend. `provider` / `model` are the
+defaults ( same fields as 0.3.0 ); `providers` lists only those with a key:
+
+    {provider: 'anthropic', model: 'claude-opus-5-5',
+     providers: {anthropic: {model: 'claude-opus-5-5', models: ['claude-opus-5-5', ...]},
+                 openai:    {model: 'gpt-5', models: [...]}}}
+
+Switching in the middle of a conversation, from the runtime:
+
+    rt.listModels()                // {current, default, providers}  ( {refresh: true} refetches )
+    rt.getModel()                  // {provider, model} the next turn will use
+    rt.setModel({provider, model}) // -> {provider, model}; rejects if not on the mount's list
+    rt.setModel({model})           //    finds the provider itself
+    rt.setModel({provider})        //    that provider's default model
+    rt.setModel(null)              //    back to the backend default
+    rt.onModelChange(fn)           // fn({provider, model}); returns an unsubscribe
+
+The new model applies from the **next turn** ( a turn already running finishes on
+the old one ) and the conversation is kept, for every session:
+
+ - same provider: the history is reused as is. Thinking blocks of another model are
+   ignored by the API. Haiku 4.5 and older Claude models don't take adaptive thinking,
+   so it is not sent for them.
+ - across providers ( anthropic ↔ openai ): the history is converted to the other
+   wire format ( `client/runtime/providers/convert.js` ) and the session rebuilt with
+   the same system prompt and tools. Tool calls stay paired with their results;
+   thinking blocks are dropped; only the latest image is kept. Prompt cache starts
+   over, as with any model change.
 
 ## Run the sample
 

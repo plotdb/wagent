@@ -5,7 +5,7 @@ import {ID, make as lderr} from '../lderr.js';
 // browser 版 provider: 打後端 llm proxy (原生 wire format), 自行跑 tool loop。
 // 介面同後端 providers/*: createSession({system, tools, runTool}) -> {send(text, cb), reset()}
 // runTool 可回傳 Promise (前端 fs / shell 皆為 async)
-export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps}) {
+export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, history: seed}) {
   const url = (api || '/api/agent') + '/llm/openai';
   // 見 anthropic.js 的同一段
   const MAX_TRUNCATED = 2;   // 見 anthropic.js
@@ -14,7 +14,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
   const toolDefs = tools.map(function(t) {
     return {type: 'function', function: {name: t.name, description: t.description, parameters: t.parameters}};
   });
-  let history = [{role: 'system', content: system}];
+  let history = [{role: 'system', content: system}].concat(Array.isArray(seed) ? seed : []);
 
   // 回傳 assistant message; cb.onDelta 時走 streaming 並累積 content / tool_calls
   function createMessage(cb) {
@@ -187,6 +187,11 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
 
   return {
     send: send,
-    reset: function() { history = [history[0]]; }
+    reset: function() { history = [history[0]]; },
+    // 見 anthropic.js。getHistory 不含 system: 那是 session 自己的, 換 provider 時不跟著走
+    format: 'openai',
+    setModel: function(m) { model = m; },
+    getModel: function() { return model; },
+    getHistory: function() { return history.slice(1); }
   };
 }

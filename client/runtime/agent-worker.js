@@ -6,12 +6,15 @@
 //  - 本檔的 chat 層:   {type: 'chat', id, text, block, session}
 //                      -> {type: 'chat-delta' | 'chat-tool' | 'chat-done' | 'chat-error', id, ...}
 //                      {type: 'chat-reset', session}
+//  - model 層:         {type: 'model-list' | 'model-set', id, ...} -> {type: 'model-result', id, ok, ...}
+//                      切換成功另外廣播 {type: 'model-change', provider, model}
 //  - host 層:          {type: 'host-tools', tools}   主執行緒註冊額外 tool
 //                      {type: 'host-call', id, name, args} -> {type: 'host-result', id, ok, ...}
 //                      非檔案系統的操作 (snapshot 等) 在主執行緒執行, 由此轉呼叫
 import {toolsFor, makeRunTool, ROOT} from './tools.js';
 import {createSession as createOpenAI} from './providers/openai.js';
 import {createSession as createAnthropic} from './providers/anthropic.js';
+import {convert} from './providers/convert.js';
 
 const params = new URL(self.location.href).searchParams;
 const api = params.get('api') || '/api/agent';
@@ -199,25 +202,75 @@ function turnContext() {
     });
 }
 
-function getInfo() {
-  if(info) { return Promise.resolve(info); }
-  return fetch(`${api}/provider`).then(function(r) { return r.json(); }).then(function(j) {
+// /provider: {provider, model, providers: {<name>: {model, models}}}。
+// 0.3.0 的後端沒有 providers —— 補成「只有預設那一個」, 選單就只有它
+function getInfo(refresh) {
+  if(info && !refresh) { return Promise.resolve(info); }
+  return fetch(`${api}/provider`, {headers: getHeaders()}).then(function(r) { return r.json(); }).then(function(j) {
+    if(!j.providers) {
+      j.providers = {};
+      if(j.provider) { j.providers[j.provider] = {model: j.model, models: [j.model]}; }
+    }
     info = j;
     return j;
   });
 }
 
+// ── 模型選擇 ──────────────────────────────────────────────────────────
+// 應用層選的 {provider, model}; null = 用後端的預設。每輪開始時才套到 session
+// (getSession), 所以跑到一半換, 生效的是下一輪, 不會一輪混兩個模型。
+let selected = null;
+function currentModel(inf) {
+  return selected || {provider: inf.provider, model: inf.model};
+}
+// 在這裡驗是為了早點報錯; 真正的執行點仍是 proxy 的白名單
+function pickModel(want) {
+  return getInfo().then(function(inf) {
+    if(!want || (!want.provider && !want.model)) { return null; }
+    let provider = want.provider;
+    if(!provider) {
+      // 只給 model: 先找目前的 provider, 再找其他的
+      const names = [currentModel(inf).provider].concat(Object.keys(inf.providers));
+      provider = names.find(function(n) {
+        return n && inf.providers[n] && inf.providers[n].models.indexOf(want.model) >= 0;
+      });
+      if(!provider) { throw new Error(`model not available: ${want.model}`); }
+    }
+    const p = inf.providers[provider];
+    if(!p) { throw new Error(`provider not available: ${provider}`); }
+    const model = want.model || p.model;
+    if(p.models.indexOf(model) < 0) { throw new Error(`model not available: ${provider} / ${model}`); }
+    return {provider: provider, model: model};
+  });
+}
+
+const CREATE = {anthropic: createAnthropic, openai: createOpenAI};
+
+// 把目前選的模型套到既有 session。同 provider 只換 model;
+// 跨 provider 就把歷史轉成對方的格式, 以同一份 system / tools 重建 —— 對話不清
+function applyModel(e, pick) {
+  if(!pick.provider) { return e.s; }
+  if(e.provider === pick.provider) {
+    e.s.setModel(pick.model);
+    return e.s;
+  }
+  e.s = e.make(pick.provider, pick.model, convert(e.s.getHistory(), e.s.format, pick.provider));
+  e.provider = pick.provider;
+  return e.s;
+}
+
 function getSession(key, block) {
-  if(sessions[key]) { return Promise.resolve(sessions[key]); }
+  if(sessions[key]) {
+    return getInfo().then(function(inf) { return applyModel(sessions[key], currentModel(inf)); });
+  }
   return Promise.all([
     getInfo(),
     fetch(`${api}/prompt?mode=browser&block=${encodeURIComponent(block || '')}`)
       .then(function(r) { return r.json(); })
   ]).then(function(r) {
-    const inf = r[0];
+    const pick = currentModel(r[0]);
     // brief 是靜態的, 放 system prompt (快取前綴); 每輪會變的走 turnContext 附在尾端
     const system = hostBrief ? `${r[1].system}\n\n${hostBrief}` : r[1].system;
-    const create = inf.provider === 'anthropic' ? createAnthropic : createOpenAI;
     const run = makeRunTool(shAgent, {
       log: function(name, input) {
         // start: dispatch 當下就發, 讓畫面即時顯示「正在做什麼」
@@ -242,12 +295,17 @@ function getSession(key, block) {
           throw e;
         });
     };
-    sessions[key] = create({
-      system: system, tools: toolsFor(r[1].preset).concat(hostTools), runTool: runTool,
-      api: api, model: inf.model, headers: getHeaders,
-      maxSteps: maxSteps, softSteps: softSteps
-    });
-    return sessions[key];
+    // 建法留著: 跨 provider 換模型時要以同一份 system / tools 重建
+    const tools = toolsFor(r[1].preset).concat(hostTools);
+    const make = function(provider, model, history) {
+      return (CREATE[provider] || createOpenAI)({
+        system: system, tools: tools, runTool: runTool,
+        api: api, model: model, headers: getHeaders,
+        maxSteps: maxSteps, softSteps: softSteps, history: history
+      });
+    };
+    sessions[key] = {provider: pick.provider, s: make(pick.provider, pick.model), make: make};
+    return sessions[key].s;
   });
 }
 
@@ -311,6 +369,30 @@ self.addEventListener('message', function(ev) {
     if(msg.session) { delete sessions[msg.session]; }
     else { Object.keys(sessions).forEach(function(k) { delete sessions[k]; }); }
     nudges = [];
+    return;
+  }
+  if(msg.type === 'model-list' || msg.type === 'model-set') {
+    const reply = function(ok, v) {
+      post(Object.assign({type: 'model-result', id: msg.id, ok: ok},
+        ok ? v : {error: String((v && v.message) || v)}));
+    };
+    if(msg.type === 'model-list') {
+      getInfo(!!msg.refresh).then(function(inf) {
+        reply(true, {
+          current: currentModel(inf), default: {provider: inf.provider, model: inf.model},
+          providers: inf.providers
+        });
+      }).catch(function(e) { reply(false, e); });
+      return;
+    }
+    pickModel(msg.model).then(function(pick) {
+      selected = pick;
+      return getInfo().then(function(inf) {
+        const cur = currentModel(inf);
+        reply(true, {current: cur});
+        post({type: 'model-change', provider: cur.provider, model: cur.model});
+      });
+    }).catch(function(e) { reply(false, e); });
     return;
   }
   if(msg.type === 'chat-nudge') {

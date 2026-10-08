@@ -16,6 +16,9 @@
         // d.transport: browser runtime 注入 ({send(text, cb), reset()})。必要 —
         // agent loop 在本機 worker 裡, chat 只是它的介面層。
         this.transport = d.transport || null;
+        // d.models: 選用, 有 listModels / setModel / onModelChange 的物件 (通常就是 runtime)。
+        // 給了, 畫面就能讓使用者在對話中換模型。
+        this.models = d.models || null;
         // 渲染錯誤自動修正: 只修 LLM 剛寫的 block, 同一輪最多 maxFix 次,
         // 成功渲染或用戶手動發話即歸零。data.autoFix = false 可關閉。
         this.autoFix = d.autoFix !== false;
@@ -123,7 +126,8 @@
           },
           provider: function() {
             return fetch(self.api + '/provider').then(function(r) { return r.json(); });
-          }
+          },
+          models: function() { return self.models; }
         };
         // 渲染錯誤自動修正 (帶 safe guard, 見 init 註解)
         if(this.sandbox && this.sandbox.on) {
