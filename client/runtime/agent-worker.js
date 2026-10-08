@@ -8,13 +8,14 @@
 //                      {type: 'chat-reset', session}
 //  - model 層:         {type: 'model-list' | 'model-set', id, ...} -> {type: 'model-result', id, ok, ...}
 //                      切換成功另外廣播 {type: 'model-change', provider, model}
-//  - host 層:          {type: 'host-tools', tools}   主執行緒註冊額外 tool
+//  - host 層:          {type: 'host-tools', tools, timeout}   主執行緒註冊額外 tool
 //                      {type: 'host-call', id, name, args} -> {type: 'host-result', id, ok, ...}
 //                      非檔案系統的操作 (snapshot 等) 在主執行緒執行, 由此轉呼叫
 import {toolsFor, makeRunTool, ROOT} from './tools.js';
 import {createSession as createOpenAI} from './providers/openai.js';
 import {createSession as createAnthropic} from './providers/anthropic.js';
 import {convert} from './providers/convert.js';
+import {createHostCaller, toolSchema} from './host-call.js';
 
 const params = new URL(self.location.href).searchParams;
 const api = params.get('api') || '/api/agent';
@@ -23,6 +24,8 @@ const eshUrl = params.get('esh') || '/assets/lib/@plotdb/esh/main/esh.js';
 // createRuntime 給; 0 / 沒給就用 provider 的預設。
 const maxSteps = parseInt(params.get('maxSteps'), 10) || 0;
 const softSteps = parseInt(params.get('softSteps'), 10) || 0;
+// 歷史裡最多留幾張圖 (見 turn-context.js 的〈圖的上限〉); 0 / 沒給就用預設
+const maxImages = parseInt(params.get('maxImages'), 10) || 0;
 // 打到 api 的額外 header ( CSRF / bearer 之類 )。可變 —— token 會過期,
 // 主執行緒用 setHeaders 換新的; provider 拿的是 getter 而不是當下的值。
 let apiHeaders = {};
@@ -164,24 +167,11 @@ let current = null;  // 進行中 request 的 id, 供 tool 事件標記
 let hostTools = [];
 let hostBrief = null;      // 靜態: 這是什麼應用 (併進 system prompt)
 let hasHostContext = false;
-const hostPending = {};
-let hostSeq = 0;
-const HOST_TIMEOUT = 20000;
 const CONTEXT_TIMEOUT = 3000;   // 每輪都要等, 不能讓應用層拖住整個對話
 const CONTEXT_LIMIT = 2000;     // 對照 blockState: 大小由應用層決定, 必須設界
-
-function hostCall(name, args, opt) {
-  opt = opt || {};
-  const id = `h${++hostSeq}`;
-  return new Promise(function(resolve, reject) {
-    const timer = setTimeout(function() {
-      delete hostPending[id];
-      reject(new Error(`${name} timed out (no response from host)`));
-    }, opt.timeout || HOST_TIMEOUT);
-    hostPending[id] = {resolve: resolve, reject: reject, timer: timer};
-    post({type: 'host-call', id: id, kind: opt.kind || 'tool', name: name, args: args || {}});
-  });
-}
+// 逾時 (預設 20 秒, tool 可各自設) 與回覆配對見 host-call.js
+const host = createHostCaller(post);
+const hostCall = host.call;
 
 // 每輪取一次應用層的狀況描述。
 // 失敗不能默默略過 — 那會讓 agent 以為「沒有狀況」而照舊往下做。
@@ -296,12 +286,13 @@ function getSession(key, block) {
         });
     };
     // 建法留著: 跨 provider 換模型時要以同一份 system / tools 重建
-    const tools = toolsFor(r[1].preset).concat(hostTools);
+    // host tool 只送 schema 那幾個欄位 (timeout 是給 runtime 的)
+    const tools = toolsFor(r[1].preset).concat(hostTools.map(toolSchema));
     const make = function(provider, model, history) {
       return (CREATE[provider] || createOpenAI)({
         system: system, tools: tools, runTool: runTool,
         api: api, model: model, headers: getHeaders,
-        maxSteps: maxSteps, softSteps: softSteps, history: history
+        maxSteps: maxSteps, softSteps: softSteps, maxImages: maxImages, history: history
       });
     };
     sessions[key] = {provider: pick.provider, s: make(pick.provider, pick.model), make: make};
@@ -335,6 +326,7 @@ self.addEventListener('message', function(ev) {
   const msg = ev.data || {};
   if(msg.type === 'host-tools') {
     hostTools = msg.tools || [];
+    host.setTools(hostTools, msg.timeout);
     return;
   }
   if(msg.type === 'agent-root') {
@@ -358,13 +350,7 @@ self.addEventListener('message', function(ev) {
     hasHostContext = !!msg.hasContext;
     return;
   }
-  if(msg.type === 'host-result') {
-    const p = hostPending[msg.id];
-    if(!p) { return; }
-    delete hostPending[msg.id];
-    clearTimeout(p.timer);
-    return msg.ok ? p.resolve(msg.result) : p.reject(new Error(msg.error));
-  }
+  if(msg.type === 'host-result') { return host.result(msg); }
   if(msg.type === 'chat-reset') {
     if(msg.session) { delete sessions[msg.session]; }
     else { Object.keys(sessions).forEach(function(k) { delete sessions[k]; }); }

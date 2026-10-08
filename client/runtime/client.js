@@ -19,7 +19,11 @@ const DEFAULTS = {
   //   maxSteps  到了由執行環境直接停止, 不再呼叫模型。
   // 預設是估的 —— 要調到對, 看 proxy 記下來的實際用量。
   maxSteps: 30,
-  softSteps: 20
+  softSteps: 20,
+  // 對話歷史裡最多留幾張圖。歷史是 append-only (改舊訊息會打掉 prompt cache, 也會讓
+  // Claude 的 thinking 作廢), 所以圖不再逐張換佔位; 超過這個數時才一次重建、只留最新一張。
+  // 不給就是 runtime 的預設 (20), 見 turn-context.js 的〈圖的上限〉。
+  maxImages: 0
 };
 
 export function createRuntime(opt) {
@@ -50,7 +54,8 @@ export function createRuntime(opt) {
     (headers ? `&headers=${encodeURIComponent(headers)}` : '') +
     (o.agentRoot ? `&agentRoot=${encodeURIComponent(o.agentRoot)}` : '') +
     (o.maxSteps ? `&maxSteps=${encodeURIComponent(o.maxSteps)}` : '') +
-    (o.softSteps ? `&softSteps=${encodeURIComponent(o.softSteps)}` : '');
+    (o.softSteps ? `&softSteps=${encodeURIComponent(o.softSteps)}` : '') +
+    (o.maxImages ? `&maxImages=${encodeURIComponent(o.maxImages)}` : '');
   const worker = new Worker(url, {type: 'module'});
   const prefix = `c${Math.random().toString(36).slice(2, 8)}-`;
   let seq = 0;
@@ -88,7 +93,9 @@ export function createRuntime(opt) {
     }
     host.brief = typeof o.brief === 'function' ? o.brief : (o.brief ? function() { return o.brief; } : null);
     host.context = typeof o.context === 'function' ? o.context : null;
-    worker.postMessage({type: 'host-tools', tools: host.tools});
+    // 逾時 (ms): tool 自己的 {timeout} > 這裡的 timeout ( snapshot 與其他沒設的 ) > 20 秒。
+    // timeout 不會送給 LLM, worker 建 tool 定義時只取 name / description / parameters
+    worker.postMessage({type: 'host-tools', tools: host.tools, timeout: o.timeout || 0});
     Promise.resolve()
       .then(function() { return host.brief ? host.brief() : null; })
       .catch(function() { return null; })

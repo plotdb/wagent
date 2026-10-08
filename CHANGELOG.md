@@ -1,5 +1,26 @@
 # Change Logs
 
+## v0.4.0
+
+ - 行為改變 ( 歷史語意 ):
+   - 對話歷史 append-only —— 送出過的訊息一律不改。改舊訊息會讓 prompt cache 從那裡全部失效,
+     而且現行 Claude ( Opus 5.5 / Fable 5.1 / Sonnet 5.5 ) 的 thinking block 綁著前綴,改了就作廢 ( 新帳號 400 )
+     - `context()` 每輪照附,舊的不再換成佔位;文字改成「描述附上當時的狀況,以最新一份為準」
+     - 圖不再逐張換成 `[earlier image omitted]`。超過 `createRuntime({maxImages})` ( 預設 20 ) 時一次重建:
+       只留最新一張、anthropic 同時丟掉所有 thinking block,之後又是 append-only
+     - 移除 `turn-context.js` 的 `pruneContext`
+ - features:
+   - anthropic:top-level 自動快取 ( `cache_control: {type: 'ephemeral'}` ),每一步都讀得到上一步的整段前綴
+     ( 先前只有 system 有快取點 )
+   - host tool 可逐個設逾時:`registerHost({tools: [{name, description, parameters, timeout}]})` ( ms ),
+     `registerHost({timeout})` 管 snapshot 與沒設的,底是 20 秒。`timeout` 不會送給 LLM
+   - 逾時訊息講明 host 可能還在做、別盲目重試 ( 避免慢的 tool 被一再重跑 )
+   - `createRuntime({maxImages})`
+ - fixes:
+   - anthropic:被截斷的 tool input 不再在 tool_use block 上多掛 `bad` 欄位 ( 原樣送回會 400 )
+ - tweaks:
+   - host 呼叫的逾時與配對拆到 `client/runtime/host-call.js` ( 可在 node 測 )
+
 ## v0.3.1
 
  - features:

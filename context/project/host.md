@@ -218,9 +218,15 @@ workspace 存在。sandbox 那塊程式碼因此一行都不用改 —— 它本
 
 ### 5. tools(選用)— host 額外提供的 LLM tool
 
-    host.tools() -> {tools: [{name, description, schema}], run(name, args)}
+    registerHost({tools: [{name, description, parameters, timeout?}], run(name, args), timeout?})
 
 預設空。agent loop 把它併到固定的五個 tool 之後。
+
+**逾時可逐個設**(0.4.0):`tool.timeout` > `registerHost({timeout})`(也管 snapshot)> 20 秒。
+生圖這類正常就要 30~60 秒的 tool,固定 20 秒的話 agent 每次都看到逾時,而 host 那邊其實
+做完了 —— 模型一再重試,每次多做一份。逾時訊息因此講明「host 可能還在做,別盲目重試,
+先查效果」。`timeout` 只給 runtime,建 tool 定義時剝掉(`host-call.js` 的 `toolSchema`),
+不送給 LLM。
 
 取捨準則(重要,否則這裡會變成所有新需求的預設出口):
 
@@ -250,9 +256,12 @@ makechart 的 `raw` / `bind` —— 對它是全盲的,而**它會用猜的**。
  - **失敗要明講**:取不到時附上 `(unavailable: ...)` 而不是靜靜略過 ——
    靜靜略過會讓 agent 沿用上一輪的狀態繼續做
  - **volatile 不進 system prompt**:system 是快取前綴,每輪都變的東西塞進去等於每輪打掉快取
- - **舊的換成佔位,不能整個刪掉**:實測發現直接刪掉的話,使用者自己切換畫面後,
-   agent 看到現在的狀況與自己上一則回答不符,會判定成「我上次答錯了」並向使用者道歉 ——
-   它上次其實是對的。少了佔位,模型無法區分「狀況變了」與「我搞錯了」,於是**編出一個不存在的錯誤**
+ - **舊的不刪、不改,只往後接**(0.4.0 起):歷史 append-only。改舊訊息會讓 prompt cache 從那裡
+   全部失效,而且現行 Claude 的 thinking block 綁著前綴,改了就作廢(新帳號 400)。
+   「只有最新一份是真的」改寫在文字裡:每份都說明它描述的是附上當時的狀況、以最新一份為準。
+   0.3 以前是把舊的換成佔位 —— 當時實測**直接刪掉**的話,使用者自己切換畫面後 agent 會判定成
+   「我上次答錯了」並道歉(它上次其實是對的);留著舊的(而不是刪)同樣保住了這個區分。
+   圖的處理同一條原則,見 `turn-context.js` 的〈圖的上限〉
 
 
 ### 7. preset — 應用的形狀
@@ -287,6 +296,10 @@ preset 把「這是哪一種應用」變成一個選項:
  - **不認得任何領域概念**。它不知道自己在編 block 還是在編別的東西
 
 錯誤約定:tool 一律回錯誤訊息而不是中斷 loop,訊息要寫明「發生什麼 + 下一步」,讓 LLM 能自我修正(如 `edit_file` 的「matched 3 times, add context or set replace_all」)。
+
+**歷史 append-only**(0.4.0):送出過的訊息一律不改 —— context、插話、步數提醒、截斷說明、圖,
+全都只往後接。理由與做法見 `logs/20261008-append-only-history.md`。唯一的例外是圖超過
+`maxImages` 時的一次性重建(只留最新一張、丟掉所有 thinking),之後又是 append-only。
 
 
 ## Block 與 host 的關係

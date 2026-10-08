@@ -1,16 +1,20 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
+import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
 import {ID, make as lderr} from '../lderr.js';
 
 // browser 版 provider: 打後端 llm proxy (原生 wire format), 自行跑 tool loop。
 // 介面同後端 providers/*: createSession({system, tools, runTool}) -> {send(text, cb), reset()}
 // runTool 可回傳 Promise (前端 fs / shell 皆為 async)
-export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, history: seed}) {
+// 歷史 append-only, 見 anthropic.js 的同一段。openai (chat completions) 的快取是自動的
+// 前綴比對, 不必標快取點 —— 只要前面的訊息不改就吃得到。
+export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, maxImages, history: seed}) {
   const url = (api || '/api/agent') + '/llm/openai';
   // 見 anthropic.js 的同一段
   const MAX_TRUNCATED = 2;   // 見 anthropic.js
   const hardMax = maxSteps > 0 ? maxSteps : 30;
   const softMax = softSteps > 0 ? Math.min(softSteps, hardMax) : Math.max(1, hardMax - 10);
+  const imageMax = maxImages > 0 ? maxImages : MAX_IMAGES;
+  // 只挑 provider 認得的欄位 (host tool 的 timeout 之類不能送上去)
   const toolDefs = tools.map(function(t) {
     return {type: 'function', function: {name: t.name, description: t.description, parameters: t.parameters}};
   });
@@ -77,8 +81,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
 
   function send(text, cb) {
     const startLen = history.length;
-    // 舊的狀況描述先清掉再附上本輪的 — 只有最新一份是真的
-    pruneContext(history);
+    // 本輪的狀況描述接在後面; 舊的不動 (見 wrapContext)
     history.push({role: 'user', content: userContent(text, cb && cb.context)});
     const events = [];
 
@@ -111,15 +114,10 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         .then(function() { return runCalls(calls, i + 1); });
     }
 
-    // 這一輪 tool 產生的圖補成一則 user message; 同時把更早的圖換掉 —
-    // 舊圖留在對話裡每輪都要重付一次 token, 只保留最新一張
+    // 這一輪 tool 產生的圖補成一則 user message。更早的圖不動 (append-only);
+    // 累積超過上限時在下一步之前一次重建, 見 step()
     function flushImages() {
       if(!images.length) { return; }
-      for(const m of history) {
-        if(m.role !== 'user' || !Array.isArray(m.content)) { continue; }
-        const idx = m.content.findIndex(function(x) { return x.type === 'image_url'; });
-        if(idx >= 0) { m.content = [{type: 'text', text: '[earlier image omitted]'}]; }
-      }
       const content = [{type: 'text', text: 'snapshot of the rendered block:'}];
       for(const img of images) {
         content.push({
@@ -156,6 +154,8 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
     const step = function() {
       if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax), events: events, limited: true}); }
       steps++;
+      // 圖超過上限: 一次性重建 (見 turn-context.js 的〈圖的上限〉); openai 沒有 thinking 要丟
+      if(countImages(history) > imageMax) { history = compactHistory(history, {keep: 1}); }
       return createMessage(cb).then(function(msg) {
         // 撞到長度上限被截斷 —— 見 anthropic.js 的同一段。
         // openai 的 tool 參數本來就是 JSON.parse 在 runCalls 裡丟例外 (會變成

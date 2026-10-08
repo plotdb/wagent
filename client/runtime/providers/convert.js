@@ -1,7 +1,8 @@
 // 對話紀錄在 anthropic 與 openai 兩種 wire format 之間轉換 —— 對話中跨 provider 換模型用。
 // 兩邊 user 訊息的 text part 形狀相同 ({type: 'text', text}), context / 插話 / 步數提醒都不用動;
 // 要轉的只有 tool 呼叫的配對與圖片。thinking 只對產生它的模型有意義, 直接丟掉。
-// 圖片只留最新一張 (同兩邊 provider 的 pruneImages / flushImages)。
+// 圖片只留最新一張: 換 provider 本來就是一段新的前綴 (快取從頭來), 順便把累積的圖清掉 ——
+// 這裡改的是轉出來的新歷史, 原本那份不動。
 
 const OMITTED = {type: 'text', text: '[earlier image omitted]'};
 

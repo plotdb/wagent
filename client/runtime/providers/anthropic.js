@@ -1,5 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {pruneContext, userContent, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
+import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
 import {ID, make as lderr} from '../lderr.js';
 
 // tool 結果可以是字串, 或 {text, image: {mediaType, data}} — anthropic 的 tool_result
@@ -15,22 +15,6 @@ function toResultContent(out) {
   return blocks;
 }
 
-// 舊圖留在對話裡每輪都要重付一次 token, 只保留最新一張
-function pruneImages(history) {
-  let seen = false;
-  for(let i = history.length - 1; i >= 0; i--) {
-    const c = history[i].content;
-    if(!Array.isArray(c)) { continue; }
-    for(const b of c) {
-      if(b.type !== 'tool_result' || !Array.isArray(b.content)) { continue; }
-      const idx = b.content.findIndex(function(x) { return x.type === 'image'; });
-      if(idx < 0) { continue; }
-      if(!seen) { seen = true; continue; }
-      b.content[idx] = {type: 'text', text: '[earlier image omitted]'};
-    }
-  }
-}
-
 // adaptive thinking 只有 4.6 以後的模型收; haiku 4.5 / 4.5 以前送了會 400, 那些就不開 thinking
 const OLD_THINKING = /^claude-(3|haiku-4|(opus|sonnet)-4(-[0-5])?(-\d{8})?$)/;
 export function thinkingFor(model) {
@@ -41,13 +25,19 @@ export function thinkingFor(model) {
 // maxSteps / softSteps: 一輪之內的模型呼叫上限, 見 turn-context.js 的 wrapLimit。
 // 由應用層決定 (createRuntime -> worker -> 這裡); 預設值是估的, 不是量的 —
 // 要調到對得先有 proxy 那邊的用量記錄。
-export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, history: seed}) {
+// maxImages: 歷史裡最多留幾張圖, 見 turn-context.js 的〈圖的上限〉。
+//
+// 歷史是 append-only: 送出過的訊息一律不改 (prompt cache 與 preserved thinking
+// 都綁著前綴)。唯一的例外是圖超過上限時的一次性重建 (compactHistory)。
+export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, maxImages, history: seed}) {
   const url = (api || '/api/agent') + '/llm/anthropic';
   // 連續截斷幾次就放棄。跟 chat 的 maxOffer 是同一類東西: 重試要有上限,
   // 否則「每次都截斷」會變成另一種跑不完的迴圈。
   const MAX_TRUNCATED = 2;
   const hardMax = maxSteps > 0 ? maxSteps : 30;
   const softMax = softSteps > 0 ? Math.min(softSteps, hardMax) : Math.max(1, hardMax - 10);
+  const imageMax = maxImages > 0 ? maxImages : MAX_IMAGES;
+  // 只挑 provider 認得的欄位 —— host tool 的 timeout 之類是給 runtime 的, 不能送上去
   const toolDefs = tools.map(function(t) {
     return {name: t.name, description: t.description, input_schema: t.parameters};
   });
@@ -57,6 +47,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
   function streamMessage(r, cb) {
     const content = [];
     const partial = {};  // index -> tool_use 的 input json 字串
+    const bad = {};      // tool_use id -> input 解不開 (被截斷)
     let stopReason = null;
     return readSSE(r, function(ev) {
       const d = JSON.parse(ev.data);
@@ -79,8 +70,9 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         if(partial[d.index] != null) {
           // 解不開就是**被截斷**, 不是「沒有參數」。先前這裡靜靜給 {},
           // 於是 edit_file({}) 就送出去了 —— 改壞檔案而且沒有任何跡象。
+          // 壞掉的記在旁邊, 不寫進 block —— block 會原樣送回 provider, 多一個欄位就是 400
           try { content[d.index].input = JSON.parse(partial[d.index] || '{}'); }
-          catch(e) { content[d.index].input = {}; content[d.index].bad = true; }
+          catch(e) { content[d.index].input = {}; bad[content[d.index].id] = true; }
         }
       } else if(d.type === 'message_delta') {
         if(d.delta && d.delta.stop_reason) { stopReason = d.delta.stop_reason; }
@@ -94,7 +86,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         throw e;
       }
     }).then(function() {
-      return {content: content.filter(Boolean), stop_reason: stopReason};
+      return {content: content.filter(Boolean), stop_reason: stopReason, bad: bad};
     });
   }
 
@@ -102,7 +94,11 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
     const params = {
       model: model || 'claude-opus-4-8',
       max_tokens: 16000,
+      // 兩個快取點: system 一個明確的 (tools + system 這段固定前綴一定讀得到),
+      // 再加 top-level 的自動快取 —— 它放在最後一個 block 上並隨對話往後移,
+      // 所以每一步都讀得到上一步的整段前綴。前提是歷史 append-only。
       system: [{type: 'text', text: system, cache_control: {type: 'ephemeral'}}],
+      cache_control: {type: 'ephemeral'},
       tools: toolDefs,
       messages: history
     };
@@ -125,16 +121,15 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
 
   function send(text, cb) {
     const startLen = history.length;
-    // 舊的狀況描述先清掉再附上本輪的 — 只有最新一份是真的
-    pruneContext(history);
+    // 本輪的狀況描述接在後面; 舊的不動 (「以最新一份為準」寫在文字裡, 見 wrapContext)
     history.push({role: 'user', content: userContent(text, cb && cb.context)});
     const events = [];
 
-    function runBlocks(blocks, i, results) {
+    function runBlocks(blocks, bad, i, results) {
       if(i >= blocks.length) { return Promise.resolve(results); }
       const b = blocks[i];
-      if(b.type !== 'tool_use') { return runBlocks(blocks, i + 1, results); }
-      if(b.bad) {
+      if(b.type !== 'tool_use') { return runBlocks(blocks, bad, i + 1, results); }
+      if(bad[b.id]) {
         // 參數是壞的, 不能拿去執行 —— 但也不能不回: tool_use 少了配對的
         // tool_result, provider 會拒絕整個請求。回一則錯誤讓模型自己重來。
         events.push({tool: b.name, input: {}, error: true});
@@ -143,7 +138,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
           content: 'tool input was truncated and could not be parsed. ' +
             'retry with smaller arguments (e.g. edit in several steps).'
         });
-        return runBlocks(blocks, i + 1, results);
+        return runBlocks(blocks, bad, i + 1, results);
       }
       return Promise.resolve()
         .then(function() { return runTool(b.name, b.input); })
@@ -158,7 +153,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
             content: String((e && e.message) || e), is_error: true
           });
         })
-        .then(function() { return runBlocks(blocks, i + 1, results); });
+        .then(function() { return runBlocks(blocks, bad, i + 1, results); });
     }
 
     let steps = 0;
@@ -169,6 +164,10 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
       // hard limit: 不再呼叫模型。events 照常回傳 — 使用者要看得到做過什麼。
       if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax), events: events, limited: true}); }
       steps++;
+      // 圖超過上限: 一次性重建 (只在 tool_result 已接上之後, 不會切在 tool 回合中間)
+      if(countImages(history) > imageMax) {
+        history = compactHistory(history, {keep: 1, drop: ['thinking', 'redacted_thinking']});
+      }
       return createMessage(cb).then(function(response) {
         // 回應撞到 max_tokens 被截斷。先前這裡完全沒有檢查 —— 截斷的回覆會被
         // 當成完整的交出去, 而截斷的 tool 參數會被當成「沒有參數」。
@@ -194,7 +193,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         }
         history.push({role: 'assistant', content: response.content});
         if(response.stop_reason === 'tool_use') {
-          return runBlocks(response.content, 0, []).then(function(results) {
+          return runBlocks(response.content, response.bad || {}, 0, []).then(function(results) {
             // 使用者執行中插的話: 只能接在 tool_result 之後 — 這則 user message
             // 已經含齊本輪所有 tool_result, 配對是完整的, 補一段 text 安全。
             const extra = cb && cb.nudge ? cb.nudge() : null;
@@ -205,7 +204,6 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
               results.push({type: 'text', text: wrapLimit(steps, hardMax)});
             }
             history.push({role: 'user', content: results});
-            pruneImages(history);
             return step();
           });
         }
