@@ -1,6 +1,6 @@
 {
   "name": "@plotdb/wagent",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "agent-compatible editing host: the agent works in a browser-local workspace and can see what it renders",
   "main": "api/index.js",
   "files": [
@@ -15,7 +15,7 @@
     "start": "node server.js",
     "setup": "fedep",
     "log": "tail -n 100 -f logs/server.log",
-    "test": "node test/node-esh.mjs && node test/nudge.mjs && node test/steps.mjs && node test/truncate.mjs && node test/lderr.mjs && node test/budget.mjs && node test/usage.mjs && node test/preset.mjs && node test/models.mjs && node test/append-only.mjs && node test/host-timeout.mjs",
+    "test": "node test/node-esh.mjs && node test/nudge.mjs && node test/steps.mjs && node test/truncate.mjs && node test/lderr.mjs && node test/budget.mjs && node test/usage.mjs && node test/preset.mjs && node test/models.mjs && node test/append-only.mjs && node test/host-timeout.mjs && node test/progress.mjs",
     "release": "npx fedep publish -g --skip-dist"
   },
   "license": "MIT",

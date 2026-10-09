@@ -1,5 +1,20 @@
 # Change Logs
 
+## master
+
+ - features:
+   - LLM 呼叫的進度事件 —— 長的輸出 ( 例如整份 HTML 寫在 tool 參數裡 ) 不再只看得到「執行中」
+     - provider ( anthropic / openai ) 逐段回報 `phase` ( `waiting` / `thinking` / `text` / `tool` / `done` / `error` )、
+       tool 名稱與參數開頭的 `path`、`outChars` / `outTokensEst` ( 估計 )、`inTokens` ( 先估, 收到 usage 後換實際值 )、
+       `startedAt`、`model`、`provider`;`done` 附 API 回報的 usage
+     - 節流:最多約每 250ms 一則,phase 改變時立即送;進度不進對話歷史
+     - worker -> `chat-progress` -> `transport.send(text, {onProgress})` -> chat block 的 `progress` 事件 ( 多帶本輪累計 `turn` )
+     - chat 預設外觀:執行中顯示一行狀態 ( 模型 · 正在做什麼 · ↑ 送出 · ↓ 輸出 · 經過時間 · 本輪累計 ),每秒更新
+ - tweaks:
+   - provider 在只給 `onProgress` ( 沒有 `onDelta` ) 時也走 streaming
+   - `test/progress.mjs`:以假的 SSE 串流驗 phase 轉換、tool 名稱、done / error、節流
+
+
 ## v0.4.0
 
  - 行為改變 ( 歷史語意 ):

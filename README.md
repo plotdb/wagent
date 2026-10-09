@@ -136,6 +136,35 @@ them; new accounts get a 400 ).
    append-only again. That costs one cache miss and the model's earlier reasoning —
    raise the cap if your agent looks at many pictures in one conversation.
 
+## Progress events
+
+A long model call ( an Opus reply writing a whole HTML file into a tool argument can run
+for minutes ) shows nothing but "running" unless you surface what it is doing. The
+runtime reports every LLM call, throttled to about one event per 250ms ( immediately on a
+phase change ). They are display-only and never enter the conversation history.
+
+    // chat block ( base or any derived look )
+    chat.on('progress', function(p) { ... })
+    // or straight from the transport
+    rt.transport.send(text, {onProgress: function(p) { ... }})
+
+ - `phase`: `waiting` ( request sent, nothing back yet ) · `thinking` · `text` · `tool`
+   ( generating tool arguments ) · `done` · `error`
+ - `tool`, `target`: the tool name, and a `path` / `file` argument when found in the
+   first few hundred characters of the arguments
+ - `outChars`, `outTokensEst` ( estimate: ~4 ASCII chars or 1 CJK char per token ),
+   `outTokens` ( actual, on `done` )
+ - `inTokens` with `inEstimated`: estimated from the request size until the API reports
+   usage ( anthropic `message_start`, openai only at the end ), then the actual total
+   including cache, split in `inDetail: {input, cacheRead, cacheWrite}`
+ - `provider`, `model`, `step`, `startedAt`, `at`; `usage` and `stopReason` on `done`,
+   `error` on `error`
+ - the chat block adds `turn: {startedAt, calls, outTokens, inTokens}` for the whole turn
+
+Field details are in `client/runtime/progress.js`. Count elapsed time yourself from
+`startedAt` — events only arrive while output is streaming. The turn ends with the
+chat block's `busy(false)`, not with a progress event.
+
 ## Run the sample
 
     npm install
