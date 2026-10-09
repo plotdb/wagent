@@ -1,6 +1,7 @@
 import {readSSE, checkResponse} from '../sse.js';
 import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
 import {ID, make as lderr} from '../lderr.js';
+import {createProgress} from '../progress.js';
 
 // tool 結果可以是字串, 或 {text, image: {mediaType, data}} — anthropic 的 tool_result
 // content 支援 block 陣列, 圖可以直接放進去
@@ -43,28 +44,53 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
   });
   let history = Array.isArray(seed) ? seed.slice() : [];
 
+  // usage 正規化成 {input, output, cacheRead, cacheWrite} ( 同 api/proxy 的記帳形狀 )
+  function normUsage(u, out) {
+    if(!u && out == null) { return null; }
+    u = u || {};
+    return {
+      input: u.input_tokens != null ? u.input_tokens : null,
+      output: out != null ? out : (u.output_tokens != null ? u.output_tokens : null),
+      cacheRead: u.cache_read_input_tokens != null ? u.cache_read_input_tokens : null,
+      cacheWrite: u.cache_creation_input_tokens != null ? u.cache_creation_input_tokens : null
+    };
+  }
+
   // streaming 時把 content_block_* 事件組回完整 content 陣列
-  function streamMessage(r, cb) {
+  // prog: 進度回報 ( 見 progress.js ), 只讀不改這裡的狀態
+  function streamMessage(r, cb, prog) {
     const content = [];
     const partial = {};  // index -> tool_use 的 input json 字串
     const bad = {};      // tool_use id -> input 解不開 (被截斷)
     let stopReason = null;
+    let usageIn = null;  // message_start 的 usage ( input / 快取 )
+    let usageOut = null; // message_delta 的 output_tokens ( 累計值, 取最後一個 )
     return readSSE(r, function(ev) {
       const d = JSON.parse(ev.data);
-      if(d.type === 'content_block_start') {
+      if(d.type === 'message_start') {
+        usageIn = (d.message && d.message.usage) || null;
+        if(usageIn) { prog.input(normUsage(usageIn)); }
+      } else if(d.type === 'content_block_start') {
         content[d.index] = Object.assign({}, d.content_block);
-        if(d.content_block.type === 'tool_use') { partial[d.index] = ''; }
+        const t = d.content_block.type;
+        if(t === 'tool_use') { partial[d.index] = ''; }
+        if(t === 'tool_use' || t === 'server_tool_use') { prog.phase('tool', d.content_block.name); }
+        else if(t === 'thinking' || t === 'redacted_thinking') { prog.phase('thinking'); }
+        else if(t === 'text') { prog.phase('text'); }
       } else if(d.type === 'content_block_delta') {
         const b = content[d.index] || (content[d.index] = {});
         if(d.delta.type === 'text_delta') {
           b.text = (b.text || '') + d.delta.text;
-          cb.onDelta(d.delta.text);
+          prog.out(d.delta.text, 'text');
+          if(cb.onDelta) { cb.onDelta(d.delta.text); }
         } else if(d.delta.type === 'thinking_delta') {
           b.thinking = (b.thinking || '') + d.delta.thinking;
+          prog.out(d.delta.thinking, 'thinking');
         } else if(d.delta.type === 'signature_delta') {
           b.signature = (b.signature || '') + d.delta.signature;
         } else if(d.delta.type === 'input_json_delta') {
           partial[d.index] = (partial[d.index] || '') + d.delta.partial_json;
+          prog.out(d.delta.partial_json, 'tool', b.name);
         }
       } else if(d.type === 'content_block_stop') {
         if(partial[d.index] != null) {
@@ -76,6 +102,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         }
       } else if(d.type === 'message_delta') {
         if(d.delta && d.delta.stop_reason) { stopReason = d.delta.stop_reason; }
+        if(d.usage && d.usage.output_tokens != null) { usageOut = d.usage.output_tokens; }
       } else if(d.type === 'error') {
         // proxy 中途中止 (額度用完) 時會注入一則帶 lderror duck type 的 error
         // —— 靠 id 分辨「這是 wagent 說的」, 不比對訊息字串。不注入的話這裡
@@ -86,11 +113,13 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         throw e;
       }
     }).then(function() {
+      prog.done(normUsage(usageIn, usageOut), stopReason);
       return {content: content.filter(Boolean), stop_reason: stopReason, bad: bad};
     });
   }
 
-  function createMessage(cb) {
+  // step: 這一輪的第幾次呼叫 ( 只給進度回報用 )
+  function createMessage(cb, step) {
     const params = {
       model: model || 'claude-opus-4-8',
       max_tokens: 16000,
@@ -104,19 +133,29 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
     };
     const thinking = thinkingFor(params.model);
     if(thinking) { params.thinking = thinking; }
-    if(cb && cb.onDelta) { params.stream = true; }
+    // 要逐段輸出或進度回報就走 streaming ( 進度要靠 delta 才看得到 )
+    if(cb && (cb.onDelta || cb.onProgress)) { params.stream = true; }
+    const body = JSON.stringify(params);
+    const prog = createProgress({
+      emit: cb && cb.onProgress, provider: 'anthropic', model: params.model, step: step, request: body
+    });
+    prog.begin();
     return fetch(url, {
       method: 'POST',
       // headers 是 getter: token 會過期, 每次呼叫都要拿當下的那一份
       headers: Object.assign({'Content-Type': 'application/json'},
         (typeof headers === 'function' ? headers() : headers) || {}),
-      body: JSON.stringify(params)
+      body: body
     })
       .then(checkResponse)
       .then(function(r) {
-        if(!params.stream) { return r.json(); }
-        return streamMessage(r, cb);
-      });
+        if(!params.stream) {
+          return r.json().then(function(j) { prog.done(normUsage(j.usage), j.stop_reason); return j; });
+        }
+        return streamMessage(r, cb, prog);
+      })
+      // 失敗也要送一次, 前端才能結束這次呼叫的顯示 ( 例外照樣往上丟 )
+      .catch(function(e) { prog.fail(e); throw e; });
   }
 
   function send(text, cb) {
@@ -168,7 +207,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
       if(countImages(history) > imageMax) {
         history = compactHistory(history, {keep: 1, drop: ['thinking', 'redacted_thinking']});
       }
-      return createMessage(cb).then(function(response) {
+      return createMessage(cb, steps).then(function(response) {
         // 回應撞到 max_tokens 被截斷。先前這裡完全沒有檢查 —— 截斷的回覆會被
         // 當成完整的交出去, 而截斷的 tool 參數會被當成「沒有參數」。
         //

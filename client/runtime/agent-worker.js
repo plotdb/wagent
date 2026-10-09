@@ -5,6 +5,8 @@
 //  - esh 的 serveShell: {type: 'exec' | 'fs' | 'hello'}  (供 connectShell / esh-term 使用)
 //  - 本檔的 chat 層:   {type: 'chat', id, text, block, session}
 //                      -> {type: 'chat-delta' | 'chat-tool' | 'chat-done' | 'chat-error', id, ...}
+//                         {type: 'chat-progress', id, progress}  每次 LLM 呼叫的進度 ( 欄位見 progress.js ),
+//                         已節流; 只給畫面用, 不進歷史
 //                      {type: 'chat-reset', session}
 //  - model 層:         {type: 'model-list' | 'model-set', id, ...} -> {type: 'model-result', id, ok, ...}
 //                      切換成功另外廣播 {type: 'model-change', provider, model}
@@ -400,7 +402,8 @@ self.addEventListener('message', function(ev) {
           return r[0].send(text, {
             context: r[1],
             nudge: takeNudges,
-            onDelta: function(t) { post({type: 'chat-delta', id: msg.id, text: t}); }
+            onDelta: function(t) { post({type: 'chat-delta', id: msg.id, text: t}); },
+            onProgress: function(p) { post({type: 'chat-progress', id: msg.id, progress: p}); }
           });
         })
         .then(function(r) {

@@ -1,6 +1,7 @@
 import {readSSE, checkResponse} from '../sse.js';
 import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
 import {ID, make as lderr} from '../lderr.js';
+import {createProgress} from '../progress.js';
 
 // browser 版 provider: 打後端 llm proxy (原生 wire format), 自行跑 tool loop。
 // 介面同後端 providers/*: createSession({system, tools, runTool}) -> {send(text, cb), reset()}
@@ -20,32 +21,55 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
   });
   let history = [{role: 'system', content: system}].concat(Array.isArray(seed) ? seed : []);
 
-  // 回傳 assistant message; cb.onDelta 時走 streaming 並累積 content / tool_calls
-  function createMessage(cb) {
+  // usage 正規化成 {input, output, cacheRead, cacheWrite}。prompt_tokens **含**快取,
+  // 拆成 input ( 未快取 ) + cacheRead, 與 anthropic 同一個形狀; openai 沒有 cacheWrite
+  function normUsage(u) {
+    if(!u) { return null; }
+    const cached = (u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0;
+    return {
+      input: u.prompt_tokens != null ? u.prompt_tokens - cached : null,
+      output: u.completion_tokens != null ? u.completion_tokens : null,
+      cacheRead: u.prompt_tokens != null ? cached : null,
+      cacheWrite: null
+    };
+  }
+
+  // 回傳 assistant message; cb.onDelta / cb.onProgress 時走 streaming 並累積 content / tool_calls
+  // step: 這一輪的第幾次呼叫 ( 只給進度回報用 )
+  function createMessage(cb, step) {
     const params = {
       model: model || 'gpt-5',
       max_completion_tokens: 16000,
       tools: toolDefs,
       messages: history
     };
-    if(cb && cb.onDelta) { params.stream = true; }
+    if(cb && (cb.onDelta || cb.onProgress)) { params.stream = true; }
+    const body = JSON.stringify(params);
+    // 送出量: chat completions 的 usage 只在串流最後一個 chunk ( proxy 補了 include_usage ),
+    // 所以整個呼叫期間 inTokens 都是估計值, done 時才換成實際值
+    const prog = createProgress({
+      emit: cb && cb.onProgress, provider: 'openai', model: params.model, step: step, request: body
+    });
+    prog.begin();
     return fetch(url, {
       method: 'POST',
       // headers 是 getter: token 會過期, 每次呼叫都要拿當下的那一份
       headers: Object.assign({'Content-Type': 'application/json'},
         (typeof headers === 'function' ? headers() : headers) || {}),
-      body: JSON.stringify(params)
+      body: body
     })
       .then(checkResponse)
       .then(function(r) {
         if(!params.stream) {
           return r.json().then(function(j) {
             var c = j.choices[0];
+            prog.done(normUsage(j.usage), c.finish_reason);
             return Object.assign({}, c.message, {finish_reason: c.finish_reason});
           });
         }
         const msg = {role: 'assistant', content: '', tool_calls: []};
         let finish = null;
+        let usage = null;
         return readSSE(r, function(ev) {
           if(ev.data === '[DONE]') { return; }
           const chunk = JSON.parse(ev.data);
@@ -57,26 +81,40 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
             if(x.name === 'lderror' && !isNaN(+x.id)) { e.id = +x.id; e.name = 'lderror'; }
             throw e;
           }
+          if(chunk.usage) { usage = chunk.usage; }
           const c = (chunk.choices || [])[0] || {};
           if(c.finish_reason) { finish = c.finish_reason; }
           const d = c.delta || {};
+          // 相容 api ( deepseek 之類 ) 會串 reasoning_content; openai 本身不串推理內容,
+          // 那段期間只會停在 waiting
+          const reasoning = d.reasoning_content || d.reasoning;
+          if(typeof reasoning === 'string' && reasoning) { prog.out(reasoning, 'thinking'); }
           if(d.content) {
             msg.content += d.content;
-            cb.onDelta(d.content);
+            prog.out(d.content, 'text');
+            if(cb.onDelta) { cb.onDelta(d.content); }
           }
           for(const tc of d.tool_calls || []) {
             const cur = msg.tool_calls[tc.index] = msg.tool_calls[tc.index] ||
               {id: '', type: 'function', function: {name: '', arguments: ''}};
             if(tc.id) { cur.id = tc.id; }
             if(tc.function && tc.function.name) { cur.function.name += tc.function.name; }
-            if(tc.function && tc.function.arguments) { cur.function.arguments += tc.function.arguments; }
+            // 新的一個 tool call ( 帶 id 的那則 ) —— 換一個 tool, target 重新找
+            if(tc.id) { prog.phase('tool', cur.function.name); }
+            if(tc.function && tc.function.arguments) {
+              cur.function.arguments += tc.function.arguments;
+              prog.out(tc.function.arguments, 'tool', cur.function.name);
+            }
           }
         }).then(function() {
           if(!msg.tool_calls.length) { delete msg.tool_calls; }
           msg.finish_reason = finish;
+          prog.done(normUsage(usage), finish);
           return msg;
         });
-      });
+      })
+      // 失敗也要送一次, 前端才能結束這次呼叫的顯示 ( 例外照樣往上丟 )
+      .catch(function(e) { prog.fail(e); throw e; });
   }
 
   function send(text, cb) {
@@ -156,7 +194,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
       steps++;
       // 圖超過上限: 一次性重建 (見 turn-context.js 的〈圖的上限〉); openai 沒有 thinking 要丟
       if(countImages(history) > imageMax) { history = compactHistory(history, {keep: 1}); }
-      return createMessage(cb).then(function(msg) {
+      return createMessage(cb, steps).then(function(msg) {
         // 撞到長度上限被截斷 —— 見 anthropic.js 的同一段。
         // openai 的 tool 參數本來就是 JSON.parse 在 runCalls 裡丟例外 (會變成
         // 一則 error 的 tool 訊息), 所以壞掉的參數不會被當成「沒有參數」;

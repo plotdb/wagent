@@ -193,6 +193,8 @@ export function createRuntime(opt) {
     if(msg.type === 'chat-delta') { return p.onDelta && p.onDelta(msg.text); }
     if(msg.type === 'chat-nudge-taken') { return p.onNudge && p.onNudge(msg.texts || []); }
     if(msg.type === 'chat-tool') { return p.onTool && p.onTool(msg); }
+    // LLM 呼叫的進度 ( 欄位見 runtime/progress.js )
+    if(msg.type === 'chat-progress') { return p.onProgress && p.onProgress(msg.progress); }
     if(msg.type === 'chat-done') {
       delete pending[msg.id];
       return p.resolve({reply: msg.reply, events: msg.events});
@@ -210,7 +212,7 @@ export function createRuntime(opt) {
       return new Promise(function(resolve, reject) {
         pending[id] = {
           resolve: resolve, reject: reject,
-          onDelta: cb.onDelta, onTool: cb.onTool, onNudge: cb.onNudge
+          onDelta: cb.onDelta, onTool: cb.onTool, onNudge: cb.onNudge, onProgress: cb.onProgress
         };
         worker.postMessage({
           type: 'chat', id: id, text: text,
