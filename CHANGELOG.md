@@ -1,6 +1,6 @@
 # Change Logs
 
-## master
+## v0.5.0
 
  - features:
    - LLM 呼叫的進度事件 —— 長的輸出 ( 例如整份 HTML 寫在 tool 參數裡 ) 不再只看得到「執行中」
