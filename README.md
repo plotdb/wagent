@@ -21,7 +21,7 @@ The rest of the repo is the demo site and its samples:
 
 ## Use it
 
-    npm install github:plotdb/wagent#semver:^0.3.0
+    npm install github:plotdb/wagent#semver:^0.4.0
 
 Backend - mount the router wherever you like:
 
@@ -96,8 +96,74 @@ the old one ) and the conversation is kept, for every session:
  - across providers ( anthropic ↔ openai ): the history is converted to the other
    wire format ( `client/runtime/providers/convert.js` ) and the session rebuilt with
    the same system prompt and tools. Tool calls stay paired with their results;
-   thinking blocks are dropped; only the latest image is kept. Prompt cache starts
-   over, as with any model change.
+   thinking blocks are dropped; only the latest image is kept ( the prefix is new
+   anyway ). Prompt cache starts over, as with any model change.
+
+## Host tools
+
+The application opens windows for the agent with `rt.registerHost(...)` ( design in
+`context/project/host.md` ):
+
+    rt.registerHost({
+      snapshot: sb.snapshot,                    // required: how the agent sees what it made
+      tools: [{name: 'gen_image', description: '...', parameters: {...},
+               timeout: 90000}],                // ms, optional; per tool
+      run: function(name, args) { ... },        // runs the tools above
+      timeout: 30000,                           // ms, optional; snapshot + tools without their own
+      brief: '...',                             // static: what this application is
+      context: function() { ... }               // dynamic: the state now, fetched every turn
+    })
+
+A host call waits `tool.timeout`, else `registerHost({timeout})`, else 20s. `timeout` is
+for the runtime only — it is never sent to the LLM. On timeout the agent is told the host
+may still be working and that calling again right away will not help — so a slow tool
+( image generation ) does not get re-run in a loop. Set the timeout above the tool's
+real worst case; a result that arrives after it is dropped.
+
+## Conversation history is append-only
+
+Messages already sent to the provider are never edited — that is what keeps the prompt
+cache hitting ( anthropic: the system block plus top-level automatic caching, so each step
+reads the whole previous prefix from cache; openai caches prefixes on its own ) and what
+current Claude models require of thinking blocks ( editing an earlier turn invalidates
+them; new accounts get a 400 ).
+
+ - `context()` is appended with every turn and earlier ones stay; the text says the
+   newest one supersedes the rest.
+ - images stay in the history ( re-sent from cache each step, ~1-2k tokens each ). Past
+   `createRuntime({maxImages})` ( default 20 ) the history is rebuilt **once**: older
+   images become `[earlier image omitted]` and thinking blocks are dropped, then it is
+   append-only again. That costs one cache miss and the model's earlier reasoning —
+   raise the cap if your agent looks at many pictures in one conversation.
+
+## Progress events
+
+A long model call ( an Opus reply writing a whole HTML file into a tool argument can run
+for minutes ) shows nothing but "running" unless you surface what it is doing. The
+runtime reports every LLM call, throttled to about one event per 250ms ( immediately on a
+phase change ). They are display-only and never enter the conversation history.
+
+    // chat block ( base or any derived look )
+    chat.on('progress', function(p) { ... })
+    // or straight from the transport
+    rt.transport.send(text, {onProgress: function(p) { ... }})
+
+ - `phase`: `waiting` ( request sent, nothing back yet ) · `thinking` · `text` · `tool`
+   ( generating tool arguments ) · `done` · `error`
+ - `tool`, `target`: the tool name, and a `path` / `file` argument when found in the
+   first few hundred characters of the arguments
+ - `outChars`, `outTokensEst` ( estimate: ~4 ASCII chars or 1 CJK char per token ),
+   `outTokens` ( actual, on `done` )
+ - `inTokens` with `inEstimated`: estimated from the request size until the API reports
+   usage ( anthropic `message_start`, openai only at the end ), then the actual total
+   including cache, split in `inDetail: {input, cacheRead, cacheWrite}`
+ - `provider`, `model`, `step`, `startedAt`, `at`; `usage` and `stopReason` on `done`,
+   `error` on `error`
+ - the chat block adds `turn: {startedAt, calls, outTokens, inTokens}` for the whole turn
+
+Field details are in `client/runtime/progress.js`. Count elapsed time yourself from
+`startedAt` — events only arrive while output is streaming. The turn ends with the
+chat block's `busy(false)`, not with a progress event.
 
 ## Run the sample
 

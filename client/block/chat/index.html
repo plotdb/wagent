@@ -10,6 +10,7 @@
     </span>
   </div>
   <div class="rc-chat-log"></div>
+  <div class="rc-chat-status" hidden></div>
   <div class="rc-chat-input">
     <textarea placeholder="輸入訊息,Enter 送出,Shift+Enter 換行"></textarea>
     <button>送出</button>
@@ -35,6 +36,10 @@
     .rc-msg.offer { background: #fdecea; color: #b3261e; }
     .rc-msg.offer button { margin-top: 6px; display: block; padding: 4px 12px; border: 0; border-radius: 5px; background: #b3261e; color: #fff; cursor: pointer; font-size: 12px; }
     .rc-msg.offer button:disabled { background: #d8a5a0; cursor: default; }
+    /* 執行中的狀態列 ( progress 事件 ): 模型 · 正在做什麼 · 送出 / 輸出 token · 經過時間 */
+    .rc-chat-status { padding: 4px 12px; font-size: 11.5px; color: #777; font-family: Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid #f3f3f3; }
+    .rc-chat-status .dot { color: #2b6cb0; }
+    .rc-chat-status.error .dot { color: #b3261e; }
     .rc-chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid #eee; }
     .rc-chat-input textarea { flex: 1; resize: none; height: 60px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13.5px; font-family: inherit; }
     .rc-chat-input button { padding: 0 18px; border: 0; border-radius: 6px; background: #2b6cb0; color: #fff; cursor: pointer; font-size: 14px; }
@@ -62,6 +67,7 @@
         var autoFixEl = root.querySelector('.rc-chat-autofix input');
         var modelEl = root.querySelector('.rc-chat-model');
         var thinking = null;
+        var statusEl = root.querySelector('.rc-chat-status');
         var queued = [];   // 已經收下、還沒送進 agent 的發話 (畫面上的節點)
 
         function addMsg(cls, text) {
@@ -112,6 +118,57 @@
           btn.textContent = b ? '排隊送出' : '送出';
           if(b) { thinking = addMsg('event', '思考中…'); }
           else if(thinking) { thinking.remove(); thinking = null; }
+        });
+        // ── 狀態列: 顯示最近一份 progress, 每秒重畫經過時間 ──────────────
+        var prog = null, ticker = null;
+        var VERB = {write_file: '寫入', edit_file: '編輯', read_file: '讀取', run_shell: '執行', snapshot: '截圖'};
+        function fmtK(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0); }
+        function fmtT(ms) {
+          var s = Math.max(0, Math.floor(ms / 1000));
+          return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+        }
+        function doing(p) {
+          if(p.phase === 'waiting') { return '等待回應'; }
+          if(p.phase === 'thinking') { return '思考中'; }
+          if(p.phase === 'text') { return '回覆中'; }
+          if(p.phase === 'tool') { return (VERB[p.tool] || p.tool || 'tool') + (p.target ? ' ' + p.target : ''); }
+          if(p.phase === 'error') { return '呼叫失敗'; }
+          return '執行工具 / 準備下一步';
+        }
+        function drawStatus() {
+          var p = prog;
+          if(!p) { return; }
+          var now = Date.now();
+          var ended = p.phase === 'done' || p.phase === 'error';
+          var out = p.outTokens != null ? fmtK(p.outTokens) : '≈' + fmtK(p.outTokensEst);
+          var parts = [
+            p.model || p.provider || '',
+            doing(p),
+            '↑ ' + (p.inEstimated ? '≈' : '') + fmtK(p.inTokens),
+            '↓ ' + out + ' tokens',
+            fmtT((ended ? p.at : now) - p.startedAt)
+          ];
+          if(p.turn) { parts.push('本輪 ' + fmtT(now - p.turn.startedAt) + ' · ' + p.turn.calls + ' 次呼叫 · ↓ ≈' + fmtK(p.turn.outTokens)); }
+          statusEl.className = 'rc-chat-status' + (p.phase === 'error' ? ' error' : '');
+          statusEl.innerHTML = '';
+          var dot = document.createElement('span');
+          dot.className = 'dot';
+          dot.textContent = '● ';
+          statusEl.appendChild(dot);
+          statusEl.appendChild(document.createTextNode(parts.join(' · ')));
+          statusEl.title = statusEl.textContent;
+        }
+        base.on('progress', function(p) {
+          prog = p;
+          statusEl.hidden = false;
+          drawStatus();
+          if(!ticker) { ticker = setInterval(drawStatus, 1000); }
+        });
+        base.on('busy', function(b) {
+          if(b) { return; }
+          prog = null;
+          statusEl.hidden = true;
+          if(ticker) { clearInterval(ticker); ticker = null; }
         });
         base.on('queued', function(text) {
           var el = addMsg('user queued', text);

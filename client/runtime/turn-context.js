@@ -3,39 +3,27 @@
 // 為什麼放在對話尾端而不是 system prompt:system prompt 是快取前綴,
 // 把每輪都變的東西塞進去等於每輪打掉快取。
 //
-// 為什麼舊的要清掉:它描述的是「當時」的狀況。留在歷史裡, agent 會讀到
-// 三輪前的狀態並以為那是現在 — 這跟看到過期畫面是同一種錯。
+// 舊的不清、不換佔位 —— 歷史只能**往後接** (append-only):
+//  - 改到任何一則已送出的訊息, 從那裡之後的 prompt cache 全部失效 (每輪重付整份前綴)
+//  - 現行 Claude 的 thinking 綁著整段對話前綴 (preserved thinking), 改了前面的訊息,
+//    後面的 thinking block 全部作廢 —— 新帳號直接 400
+// 0.3 以前是把舊的換成佔位 (圖也一樣只留最新一張)。應用層實測 opus 5.5 一次 22 步的執行:
+// 未快取的 input 是快取讀取的將近 4 倍, 成本大半花在重送同一段前綴。
 //
-// 但不能整個刪掉, 要留一個佔位。實測: 直接刪掉的話, 用戶自己把畫面切到別的
-// block 之後, agent 看到現在的狀況與自己上一則的回答不符, 會判斷成「我上次答錯了」
-// 並向用戶道歉 — 它上次其實是對的。少了佔位, 模型就無法區分
-// 「狀況變了」與「我搞錯了」, 於是編出一個不存在的錯誤。
+// 「只有最新一份是真的」改由文字表達: 每份都標明它描述的是**附上當時**的狀況,
+// 以最後一份為準。舊的留著反而有好處 —— 模型看得到狀況怎麼變過來的, 更不會
+// 把「狀況變了」誤判成「我上次答錯了」(0.3 以前靠佔位防的就是這個)。
 export const CONTEXT_TAG = '[application-context]';
-const STALE = `${CONTEXT_TAG} (前一輪的狀況描述, 已省略。當時的狀況與現在可能不同。)`;
 
 export function wrapContext(text) {
   return [
     CONTEXT_TAG,
     text,
-    '(此段由執行環境每輪自動附上, 描述「這一輪」的狀況; 不是用戶說的話。',
+    '(此段由執行環境每輪自動附上, 描述「附上當時」的狀況; 不是用戶說的話。',
+    '對話中較早的 [application-context] 都是當時的狀況, 已被這一份取代 —— 以最新一份為準。',
     '狀況會在兩輪之間改變 — 用戶可能自己切換了畫面或改了檔案。',
     '因此本輪與你先前回答不一致時, 預設是狀況變了, 而不是你之前答錯了。)'
   ].join('\n');
-}
-
-function isContextPart(p) {
-  return p && p.type === 'text' && typeof p.text === 'string' &&
-    p.text.slice(0, CONTEXT_TAG.length) === CONTEXT_TAG;
-}
-
-// 歷史裡舊的 context 換成佔位 (內容省掉省 token, 但保留「當時有一份」這個事實)
-export function pruneContext(history) {
-  for(const m of history) {
-    if(!m || m.role !== 'user' || !Array.isArray(m.content)) { continue; }
-    for(const p of m.content) {
-      if(isContextPart(p) && p.text !== STALE) { p.text = STALE; }
-    }
-  }
 }
 
 // 本輪的 user 訊息: [context?, text]
@@ -46,9 +34,72 @@ export function userContent(text, context) {
   return parts;
 }
 
+// ── 圖的上限 ────────────────────────────────────────────────────────
+// 圖不再逐張換成佔位 (那是改歷史, 理由同上)。留著的圖每步都會重送, 但吃得到快取
+// (讀取是 input 單價的 1/10 以下), 一張約 1~2k token, 十幾張的成本仍小於一次快取失效。
+//
+// 真正要擋的是無上限累積 (context 變大、品質下降)。所以設上限, 超過時**一次**重建:
+// 只留最新 keep 張, 其餘換佔位 —— 等於從那裡開一段新的前綴, 快取失效一次, 之後又是
+// append-only。anthropic 要同時丟掉所有 thinking block: 它們綁著舊前綴, 前綴改了
+// 還送回去會被拒 (400)。丟光 thinking 是官方文件給的合法形狀; 代價是模型失去先前的推理。
+export const IMAGE_OMITTED = '[earlier image omitted]';
+export const MAX_IMAGES = 20;
+
+function isImage(b) { return b && (b.type === 'image' || b.type === 'image_url'); }
+
+// 依出現順序列出每張圖的位置 (含 anthropic tool_result 內層的)
+function imageSlots(history) {
+  const at = [];
+  history.forEach(function(m, i) {
+    if(!m || !Array.isArray(m.content)) { return; }
+    m.content.forEach(function(b, j) {
+      if(isImage(b)) { at.push([i, j, -1]); }
+      else if(b && b.type === 'tool_result' && Array.isArray(b.content)) {
+        b.content.forEach(function(x, k) { if(isImage(x)) { at.push([i, j, k]); } });
+      }
+    });
+  });
+  return at;
+}
+
+export function countImages(history) { return imageSlots(history).length; }
+
+// 回傳**新的**歷史, 不動原本的物件 (舊陣列可能還被別人拿著, 例如測試、getHistory)。
+// 訊息一對一保留 (index 不變), 只換掉圖與 drop 列的 block 型別。
+export function compactHistory(history, opt) {
+  opt = opt || {};
+  const keep = opt.keep == null ? 1 : opt.keep;
+  const drop = opt.drop || [];
+  const slots = imageSlots(history);
+  const omit = {};
+  slots.slice(0, Math.max(0, slots.length - keep)).forEach(function(s) { omit[s.join(',')] = true; });
+  const ph = {type: 'text', text: IMAGE_OMITTED};
+  return history.map(function(m, i) {
+    if(!m || !Array.isArray(m.content)) { return m; }
+    let changed = false;
+    let content = [];
+    m.content.forEach(function(b, j) {
+      if(drop.indexOf(b && b.type) >= 0) { changed = true; return; }
+      if(omit[[i, j, -1].join(',')]) { changed = true; content.push(ph); return; }
+      if(b && b.type === 'tool_result' && Array.isArray(b.content)) {
+        const inner = b.content.map(function(x, k) { return omit[[i, j, k].join(',')] ? ph : x; });
+        if(inner.some(function(x, k) { return x !== b.content[k]; })) {
+          changed = true;
+          content.push(Object.assign({}, b, {content: inner}));
+          return;
+        }
+      }
+      content.push(b);
+    });
+    if(!changed) { return m; }
+    // 空的 assistant 訊息不合法 (只有 thinking 的那種, 丟掉之後就空了)
+    if(!content.length) { content = [{type: 'text', text: '(empty)'}]; }
+    return Object.assign({}, m, {content: content});
+  });
+}
+
 // ── 執行中插話 ──────────────────────────────────────────────────────
-// 使用者在 agent 跑的時候送的訊息。跟 context 相反, 這**是用戶說的話**,
-// 所以不清、不換佔位 — 它是對話的一部分。
+// 使用者在 agent 跑的時候送的訊息。跟 context 不同, 這**是用戶說的話** —— 對話的一部分。
 //
 // 插入點只能在「tool result 之後、下一輪 LLM 呼叫之前」: 塞在 tool_use 與
 // tool_result 中間會破壞配對, provider 會直接拒絕整個請求。

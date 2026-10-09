@@ -35,6 +35,7 @@
         this.maxOffer = d.maxOffer || 3;
         this.wrote = false;      // 這一輪 agent 有沒有寫過檔 (自動修正的 safe guard)
         this.busy = false;       // 正在跑 — 決定發話要開新的一輪還是插隊
+        this.turn = null;        // 本輪 ( 一次 send ) 的累計, 給 progress 事件用
         this.handlers = {};
       },
       interface: function() {
@@ -53,6 +54,43 @@
           if((ev.tool === 'write_file' || ev.tool === 'edit_file') && !ev.error) {
             self.wrote = true;
           }
+        }
+        // ── progress 事件 ───────────────────────────────────────────────
+        // runtime 每次 LLM 呼叫的進度 ( 欄位定義見 client/runtime/progress.js ), 這裡原樣轉出,
+        // 再加上本輪的累計 turn。已在 worker 端節流 ( 最多約每 250ms 一則, phase 改變時立即 )。
+        //
+        //   on('progress', function(p) { ... })
+        //   p.provider / p.model   本次呼叫的模型
+        //   p.step                 本輪第幾次呼叫 ( 插話接著跑的那段會從 1 重新起算 )
+        //   p.phase                'waiting' | 'thinking' | 'text' | 'tool' | 'done' | 'error'
+        //   p.tool / p.target      phase 為 tool 時的工具名稱 / 參數裡的 path ( 抓得到才有 )
+        //   p.outChars             本次呼叫累積的輸出字元數 ( text + thinking + tool 參數 )
+        //   p.outTokensEst         輸出 token 估計值;  p.outTokens: done 時 API 回報的實際值
+        //   p.inTokens             送出量 token;  p.inEstimated 為 true 表示還是估計值
+        //   p.inDetail             實際值的拆分 {input, cacheRead, cacheWrite} ( 合計 = inTokens )
+        //   p.usage / p.stopReason done 時附上;  p.error: phase 為 error 時的訊息
+        //   p.startedAt / p.at     本次呼叫開始 / 這份快照的時間 ( ms )
+        //   p.turn                 本輪累計 {startedAt, calls, outTokens, inTokens}:
+        //                          outTokens = 已結束呼叫的實際值 ( 沒有就用估計 ) + 進行中這次的估計
+        //                          inTokens  = 各次呼叫送出量的合計 ( 快取讀取也算在內 )
+        //
+        // 經過時間由畫面自己以 startedAt 計 ( 事件只在有輸出時才來 )。這輪結束時沒有特別的
+        // progress 事件 —— 以 busy(false) 為準收掉顯示。進度不進對話歷史。
+        function onProgress(p) {
+          var t = self.turn;
+          if(!t || !p) { return; }
+          if(p.phase === 'waiting' && t.cur !== p.startedAt) { t.cur = p.startedAt; t.calls++; }
+          var out = p.outTokens != null ? p.outTokens : (p.outTokensEst || 0);
+          var ended = p.phase === 'done' || p.phase === 'error';
+          if(ended) { t.outDone += out; t.inDone += p.inTokens || 0; t.cur = null; }
+          emit('progress', Object.assign({}, p, {
+            turn: {
+              startedAt: t.startedAt,
+              calls: t.calls,
+              outTokens: t.outDone + (ended ? 0 : out),
+              inTokens: t.inDone + (ended ? 0 : (p.inTokens || 0))
+            }
+          }));
         }
         this.itf = {
           on: function(ev, fn) {
@@ -88,6 +126,7 @@
               self.offered = null; self.offers = 0;
             }
             self.busy = true;
+            self.turn = {startedAt: Date.now(), calls: 0, cur: null, outDone: 0, inDone: 0};
             emit('busy', true);
             // agent loop 在本機 worker; transport 由 runtime 注入 (createRuntime().transport)
             if(!self.transport) {
@@ -105,16 +144,19 @@
                   if(ev.error) { emit('tool', ev); }
                 },
                 // 排隊的訊息真的送進去了 — 讓畫面把「排隊中」改掉
-                onNudge: function(texts) { emit('nudge-taken', texts); }
+                onNudge: function(texts) { emit('nudge-taken', texts); },
+                onProgress: onProgress
               })
                 .then(function(j) {
                   self.busy = false;
+                  self.turn = null;
                   emit('reply', j.reply || '');
                   emit('busy', false);
                   return j;
                 })
                 .catch(function(e) {
                   self.busy = false;
+                  self.turn = null;
                   emit('busy', false);
                   emit('error', e);
                   throw e;
