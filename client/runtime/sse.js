@@ -35,7 +35,7 @@ export function readSSE(response, onEvent) {
 
 // 檢查回應是否為錯誤, 是則丟出帶訊息的 Error。
 //
-// body 若是 lderror 的形狀 ({id, name: 'lderror'}) 就把 id 帶到 Error 上 ——
+// body 若是 lderror 的形狀 ({id, name: 'lderror', payload}) 就把 id 與 payload 帶到 Error 上 ——
 // 呼叫端要能靠 id 分辨「額度用完」和「上游壞了」, 而不是比對訊息字串
 // (字串會改, 也會因為 provider 不同而不同)。
 export function checkResponse(r) {
@@ -49,7 +49,8 @@ export function checkResponse(r) {
       msg = (ld && ld.message) || (j.error && (j.error.message || j.error)) || t;
     } catch(e) { /* 非 json, 用原文 */ }
     const e = new Error(ld ? msg : `${r.status}: ${msg}`);
-    if(ld) { e.id = +ld.id; e.name = 'lderror'; }
+    // payload: 給畫面組訊息用的資料 ( 例如點數不足的 need / balance ); message 通常是給開發者的英文
+    if(ld) { e.id = +ld.id; e.name = 'lderror'; if(ld.payload) { e.payload = ld.payload; } }
     e.status = r.status;
     throw e;
   });

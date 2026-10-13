@@ -31,6 +31,21 @@
     .rc-msg.assistant { background: #f0f0ec; color: #222; }
     .rc-msg.event { background: transparent; color: #888; font-size: 12px; padding: 2px 6px; font-family: Menlo, monospace; }
     .rc-msg.error { background: #fdecea; color: #b3261e; }
+    /* markdown 轉譯的訊息 ( base.render ): html 已經有段落, 不再保留換行 */
+    .rc-msg.md { white-space: normal; }
+    .rc-msg.md > :first-child { margin-top: 0; }
+    .rc-msg.md > :last-child { margin-bottom: 0; }
+    .rc-msg.md p, .rc-msg.md ul, .rc-msg.md ol, .rc-msg.md pre, .rc-msg.md blockquote, .rc-msg.md table { margin: 0 0 8px; }
+    .rc-msg.md ul, .rc-msg.md ol { padding-left: 20px; }
+    .rc-msg.md h1, .rc-msg.md h2, .rc-msg.md h3, .rc-msg.md h4 { font-size: 14px; font-weight: 700; margin: 10px 0 6px; }
+    .rc-msg.md code { font-family: Menlo, monospace; font-size: 12px; background: rgba(0,0,0,.06); padding: 1px 4px; border-radius: 3px; }
+    .rc-msg.md pre { background: rgba(0,0,0,.06); padding: 8px 10px; border-radius: 6px; overflow-x: auto; white-space: pre; }
+    .rc-msg.md pre code { background: none; padding: 0; }
+    .rc-msg.md blockquote { border-left: 3px solid rgba(0,0,0,.15); padding-left: 10px; color: #555; }
+    .rc-msg.md table { border-collapse: collapse; font-size: 12.5px; }
+    .rc-msg.md th, .rc-msg.md td { border: 1px solid rgba(0,0,0,.12); padding: 3px 8px; }
+    .rc-msg.md a { color: #2b6cb0; }
+    .rc-msg.md .wagent-widget.pending { min-height: 24px; border-radius: 6px; background: rgba(0,0,0,.05); }
     /* 排隊中的發話: 已經收下但還沒送進 agent, 用虛線邊框跟已送出的區分 */
     .rc-msg.user.queued { background: transparent; color: #2b6cb0; border: 1px dashed #9dbde0; }
     .rc-msg.offer { background: #fdecea; color: #b3261e; }
@@ -93,19 +108,25 @@
           live = null;  // tool 之後的文字另起一則訊息
           working();
         });
+        // assistant 的訊息用 base.render 畫 ( markdown 轉譯, 見 base.html 的「訊息格式化」 ).
+        // 串流中累積原文 ( src ), 每個 frame 最多重畫一次; 收完整 ( reply ) 再畫一次 final
         var live = null;  // token streaming 中的 assistant 訊息
+        var pending = false;
+        function paint() {
+          pending = false;
+          if(live) { base.render(live, live.src); log.scrollTop = log.scrollHeight; }
+        }
         base.on('delta', function(t) {
-          if(!live) { live = addMsg('assistant', ''); }
-          live.textContent += t;
+          if(!live) { live = addMsg('assistant md', ''); live.src = ''; }
+          live.src += t;
+          if(!pending) { pending = true; requestAnimationFrame(paint); }
           working();
         });
         base.on('reply', function(text) {
-          if(live) {
-            live.textContent = text || '(無回覆)';
-            live = null;
-          } else {
-            addMsg('assistant', text || '(無回覆)');
-          }
+          var d = live || addMsg('assistant md', '');
+          base.render(d, text || '(無回覆)', {final: true});
+          live = null;
+          log.scrollTop = log.scrollHeight;
         });
         base.on('error', function(e) {
           live = null;

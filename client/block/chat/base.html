@@ -37,6 +37,10 @@
         this.busy = false;       // 正在跑 — 決定發話要開新的一輪還是插隊
         this.turn = null;        // 本輪 ( 一次 send ) 的累計, 給 progress 事件用
         this.handlers = {};
+        // 訊息格式化 ( 見 interface 的 format / render / widget ). data.markdown = false 關閉 markdown, 只顯示純文字
+        this.markdown = d.markdown !== false;
+        this.widgets = {};
+        this.md = null;          // marked 實例 ( 第一次用得到時建立 )
       },
       interface: function() {
         var self = this;
@@ -55,6 +59,88 @@
             self.wrote = true;
           }
         }
+        // ── 訊息格式化 ───────────────────────────────────────────────────
+        // LLM 的文字輸出 -> 畫面。預設當 markdown 轉譯 ( 模型常用 markdown 回話 )。視覺層用:
+        //
+        //   itf.render(el, text, {final})   把 text 畫進 el ( 串流中可以一直重畫; final = 這則收完整了 )
+        //   itf.format(text)                只要 html 字串 ( 已經過 sanitize )
+        //   itf.widget(name, fn)            註冊互動元素 ( 見下 )
+        //
+        // 相依: 頁面要載入 marked ( window.marked, 需有 Marked 類別, >= 5 ) 與 DOMPurify ( window.DOMPurify )。
+        // 缺任一個就退回純文字 —— 寧可不轉譯, 也不要沒 sanitize 的 html。
+        //
+        // 安全: LLM 的輸出不可信 ( 可能被它讀到的檔案、網頁內容誘導 )。
+        //  - 原始 html 一律當文字顯示 ( marked 的 html renderer 改成跳脫 ), 再整份過 DOMPurify
+        //  - 連結開新分頁 ( noopener ); javascript: 等由 DOMPurify 擋掉
+        //
+        // 擴充 ( 互動元素, 例如選項按鈕、表單、預覽卡 ): LLM 輸出
+        //
+        //   ```wagent:<name>
+        //   <spec, 文字, 格式由 widget 自己定 ( 通常是 JSON )>
+        //   ```
+        //
+        // 會變成一個佔位元素, 由 itf.widget(name, fn) 註冊的 fn(spec, ctx) 畫:
+        //   ctx.el      佔位元素 ( 畫在裡面 )
+        //   ctx.send    itf.send ( 例如按鈕按下去送出一句話 )
+        //   ctx.name    widget 名稱
+        // 串流中 ( final 還沒到 ) 只顯示佔位, spec 收完整才呼叫 fn, 每個元素只呼叫一次。
+        // 沒註冊的名稱照一般程式碼區塊顯示。要讓 LLM 用某個 widget, 要在 prompt 裡說明它的格式。
+        function esc(t) {
+          return String(t).replace(/[&<>"']/g, function(c) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+          });
+        }
+        function plain(t) { return esc(t).replace(/\n/g, '<br>'); }
+        function marked() {
+          if(self.md) { return self.md; }
+          // 沒有的話不記下來: 頁面可能晚一點才載入 marked / DOMPurify, 下一次再試
+          var M = window.marked;
+          if(!(self.markdown && M && M.Marked && window.DOMPurify)) { return false; }
+          var md = new M.Marked({gfm: true, breaks: true});
+          md.use({renderer: {
+            // 原始 html 當文字 ( marked 新舊版的參數形狀不同: 字串或 token )
+            html: function(h) { return esc(typeof h === 'object' ? (h.text || h.raw || '') : h); },
+            // ```wagent:<name> -> widget 佔位; 其他交回預設的 renderer ( 回傳 false )
+            code: function(a, b) {
+              var code = typeof a === 'object' ? a.text : a;
+              var lang = typeof a === 'object' ? a.lang : b;
+              var m = /^wagent:([\w-]+)/.exec(lang || '');
+              if(!m) { return false; }
+              return '<div class="wagent-widget" data-widget="' + esc(m[1]) + '" data-spec="' + esc(code || '') + '"></div>';
+            }
+          }});
+          return (self.md = md);
+        }
+        function format(text) {
+          text = text == null ? '' : String(text);
+          var md = marked();
+          if(!md) { return plain(text); }
+          try { return window.DOMPurify.sanitize(md.parse(text)); }
+          catch(e) { return plain(text); }
+        }
+        function hydrate(el, final) {
+          Array.prototype.forEach.call(el.querySelectorAll('a[href]'), function(a) {
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+          });
+          Array.prototype.forEach.call(el.querySelectorAll('.wagent-widget'), function(w) {
+            if(w.dataset.done) { return; }
+            var name = w.dataset.widget, spec = w.dataset.spec || '', fn = self.widgets[name];
+            if(!final) { w.classList.add('pending'); return; }
+            w.dataset.done = '1';
+            w.classList.remove('pending');
+            if(!fn) {
+              var pre = document.createElement('pre'), code = document.createElement('code');
+              code.textContent = spec;
+              pre.appendChild(code);
+              w.replaceWith(pre);
+              return;
+            }
+            try { fn(spec, {el: w, send: self.itf.send, name: name}); }
+            catch(e) { w.textContent = spec; console.warn('[wagent] widget ' + name + ' failed', e); }
+          });
+        }
+
         // ── progress 事件 ───────────────────────────────────────────────
         // runtime 每次 LLM 呼叫的進度 ( 欄位定義見 client/runtime/progress.js ), 這裡原樣轉出,
         // 再加上本輪的累計 turn。已在 worker 端節流 ( 最多約每 250ms 一則, phase 改變時立即 )。
@@ -98,6 +184,14 @@
             return self.itf;
           },
           block: function() { return self.blockName; },
+          // 訊息格式化 ( 說明見上方「訊息格式化」 )
+          format: function(text) { return format(text); },
+          render: function(el, text, o) {
+            el.innerHTML = format(text);
+            hydrate(el, !!(o && o.final));
+            return el;
+          },
+          widget: function(name, fn) { self.widgets[name] = fn; return self.itf; },
           // 正在跑嗎 — 畫面靠它決定發話會不會變成排隊
           busy: function() { return self.busy; },
           // 自動修正的開關。預設開 = 出錯就讓 agent 自己修; 關 = 只提議,
