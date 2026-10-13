@@ -1,6 +1,6 @@
 {
   "name": "@plotdb/wagent",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "agent-compatible editing host: the agent works in a browser-local workspace and can see what it renders",
   "main": "api/index.js",
   "files": [
@@ -26,7 +26,9 @@
     "@plotdb/block": ">=5.7.3",
     "@plotdb/esh": ">=0.5.1",
     "@zumer/snapdom": ">=2.24.1",
-    "playwright": ">=1.40.0"
+    "playwright": ">=1.40.0",
+    "marked": ">=5.0.0",
+    "dompurify": ">=3.0.0"
   },
   "peerDependenciesMeta": {
     "@plotdb/block": {
@@ -36,6 +38,12 @@
       "optional": true
     },
     "playwright": {
+      "optional": true
+    },
+    "marked": {
+      "optional": true
+    },
+    "dompurify": {
       "optional": true
     }
   },

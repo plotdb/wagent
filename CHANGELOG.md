@@ -1,5 +1,22 @@
 # Change Logs
 
+## v0.6.0
+
+ - features:
+   - 對話訊息的格式化 ( chat base 的 `render` / `format` / `widget` ):預設把 LLM 的文字當 markdown 轉譯
+     - 需要頁面載入 `marked` ( >= 5 ) 與 `DOMPurify`,缺任一個退回純文字;`data.markdown = false` 關閉
+     - 安全:原始 html 當文字顯示、整份過 DOMPurify、連結開新分頁
+     - 擴充點:```` ```wagent:<name> ```` 的程式碼區塊交給 `widget(name, fn)` 註冊的函式畫 ( 收完整才呼叫 ),
+       之後的互動元素 ( 選項、表單、預覽卡 ) 走這裡;沒註冊的照程式碼區塊顯示
+     - 預設外觀 ( block/chat/index.html ) 改用 `render`,串流中每個 frame 最多重畫一次
+ - fixes:
+   - LLM 代理回的 lderror ( 例如額度、點數不足 ) 的 `id` 與 `payload` 帶得到畫面:
+     `checkResponse` 保留 `payload`,worker 的 `chat-error` 一併送出,client 重建成 lderror。
+     先前跨過 worker 只剩英文 message,畫面無法依代碼組訊息
+ - tweaks:
+   - `test/lderr.mjs`:`checkResponse` 帶 id / payload
+
+
 ## v0.5.0
 
  - features:

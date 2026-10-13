@@ -201,7 +201,11 @@ export function createRuntime(opt) {
     }
     if(msg.type === 'chat-error') {
       delete pending[msg.id];
-      return p.reject(new Error(msg.error));
+      const e = new Error(msg.error);
+      // worker 送來的 lderror 資訊 ( 見 agent-worker.js ): 重建成 lderror 的形狀
+      if(msg.errorId) { e.id = msg.errorId; e.name = 'lderror'; }
+      if(msg.errorPayload) { e.payload = msg.errorPayload; }
+      return p.reject(e);
     }
   });
 
