@@ -419,7 +419,11 @@ self.addEventListener('message', function(ev) {
         post({type: 'chat-done', id: msg.id, reply: r.reply, events: r.events});
       })
       .catch(function(e) {
-        post({type: 'chat-error', id: msg.id, error: String((e && e.message) || e)});
+        // lderror 的 id / payload 一起送出去 ( worker 邊界只能傳可序列化的資料, Error 物件本身過不去 ),
+        // client 那邊重建成 lderror —— 少了它, 畫面只拿得到給開發者看的英文 message, 也分不出是哪一種錯
+        post({type: 'chat-error', id: msg.id, error: String((e && e.message) || e),
+          errorId: (e && e.name === 'lderror' && !isNaN(+e.id)) ? +e.id : undefined,
+          errorPayload: (e && e.payload) || undefined});
       })
       .then(function() { current = null; });
   });

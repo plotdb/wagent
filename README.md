@@ -45,9 +45,33 @@ for. Then `import('/assets/lib/@plotdb/wagent/main/runtime/client.js')` and
 
 fedep only copies what *you* list, so wagent's own frontend dependencies are yours to
 list too: `@plotdb/esh` always, `@plotdb/block` ( + proxise / semver / csscope /
-rescope ) for the chat / sandbox blocks, `@zumer/snapdom` for sandbox images. They are
-declared as `peerDependencies`; all but `@plotdb/esh` are optional, since a page that
-only uses the runtime ( no chat / sandbox block ) needs none of them.
+rescope ) for the chat / sandbox blocks, `@zumer/snapdom` for sandbox images, `marked` +
+`dompurify` for markdown in chat messages ( see below ). They are declared as
+`peerDependencies`; all but `@plotdb/esh` are optional, since a page that only uses the
+runtime ( no chat / sandbox block ) needs none of them.
+
+## Chat message formatting
+
+The chat base block renders the model's text as markdown by default. A view layer calls
+
+    base.render(el, text, {final})   // draw text into el; call again while streaming, final = complete
+    base.format(text)                // just the sanitized html string
+    base.widget(name, fn)            // register an interactive element ( below )
+
+It needs `window.marked` ( >= 5, for the `Marked` class ) and `window.DOMPurify` on the
+page; without either it falls back to plain text rather than render unsanitized html.
+`data.markdown = false` turns markdown off. Model output is treated as untrusted: raw html
+is shown as text, everything goes through DOMPurify, links open in a new tab.
+
+Extension point for interactive elements - the model writes a fenced block
+
+    ```wagent:<name>
+    <spec, e.g. JSON>
+    ```
+
+which becomes a placeholder handed to `fn(spec, {el, send, name})` registered with
+`base.widget(name, fn)`, once the message is complete. Unregistered names show as a code
+block. Describe the widget's format in your prompt so the model knows when to use it.
 
 ## Models
 

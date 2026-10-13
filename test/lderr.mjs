@@ -7,6 +7,7 @@
 import assert from 'node:assert';
 import {createRequire} from 'node:module';
 import * as web from '../client/runtime/lderr.js';
+import {checkResponse} from '../client/runtime/sse.js';
 
 const require = createRequire(import.meta.url);
 const api = require('../api/lderr.js');
@@ -41,5 +42,20 @@ ok('body(): 形狀與 lderror 物件一致, 前端可直接 duck type');
 // 490: lderror 的 id 空間跟 HTTP 4xx/5xx 沒有一對一關係
 assert.equal(api.HTTP, 490);
 ok('HTTP 490 (同 servebase 的 error-handler)');
+
+// checkResponse: 錯誤回應是 lderror 時, id 與 payload 都要帶到 Error 上 ( 畫面靠它們組訊息, 例如點數不足 )
+const res = (status, body) => ({ok: false, status, text: () => Promise.resolve(JSON.stringify(body))});
+await checkResponse(res(490, {name: 'lderror', id: 11001, message: 'Not enough credits', payload: {need: 382, balance: 9}}))
+  .then(() => assert.fail('應該丟出錯誤'), (err) => {
+    assert.equal(err.id, 11001);
+    assert.equal(err.name, 'lderror');
+    assert.deepEqual(err.payload, {need: 382, balance: 9});
+  });
+await checkResponse(res(500, {error: {message: 'upstream'}}))
+  .then(() => assert.fail('應該丟出錯誤'), (err) => {
+    assert.equal(err.id, undefined);
+    assert.ok(/500/.test(err.message));
+  });
+ok('checkResponse(): lderror 帶 id 與 payload; 其他錯誤保留狀態碼');
 
 console.log('all ok');
