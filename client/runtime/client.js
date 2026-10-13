@@ -140,9 +140,36 @@ export function createRuntime(opt) {
     };
   }
 
+  // 對話的保存 ( 見 agent-worker.js 的〈對話的保存與壓縮〉 ): 請求與回覆以 rid 配對
+  const sessionPending = {};
+  function sessionCall(msg) {
+    const rid = prefix + 's' + (++seq);
+    return new Promise(function(resolve) {
+      sessionPending[rid] = resolve;
+      worker.postMessage(Object.assign({rid: rid}, msg));
+    });
+  }
+  const sessions = {
+    // 這個 session 目前的對話 ( 送給模型的那份: {v, provider, model, format, history} ), 沒有回 null.
+    // host 每輪結束後拿去存 ( 例如存到伺服器 ). opt.images: 副本只留最新幾張圖 ( 存檔小一點 )
+    export: function(key, opt) {
+      return sessionCall({type: 'session-export', key: key, opt: opt || null}).then(function(m) { return m.data || null; });
+    },
+    // 換成之前存的對話 ( 下一輪開始時套用; provider 不同會轉換格式 )
+    import: function(key, data) { return sessionCall({type: 'session-import', key: key, data: data}).then(function() {}); }
+  };
+  // 壓縮條件 {at ( token 門檻 ), keep ( 保留幾輪 ), provider, model ( 摘要用 )}; null 關閉 ( 見 compact.js )
+  function setCompact(c) { worker.postMessage({type: 'compact-set', opt: c || null}); }
+  if(o.compact) { setCompact(o.compact); }
+
   // worker 的 postMessage 是廣播: 一律以 id 過濾出自己的訊息
   worker.addEventListener('message', function(ev) {
     const msg = ev.data || {};
+    if((msg.type === 'session-data' || msg.type === 'session-imported') && sessionPending[msg.rid]) {
+      const fn = sessionPending[msg.rid];
+      delete sessionPending[msg.rid];
+      return fn(msg);
+    }
     if(msg.type === 'model-change') {
       const info = {provider: msg.provider || null, model: msg.model || null};
       modelListeners.forEach(function(fn) {
@@ -195,6 +222,8 @@ export function createRuntime(opt) {
     if(msg.type === 'chat-tool') { return p.onTool && p.onTool(msg); }
     // LLM 呼叫的進度 ( 欄位見 runtime/progress.js )
     if(msg.type === 'chat-progress') { return p.onProgress && p.onProgress(msg.progress); }
+    // 這一輪開始前把對話壓縮了 ( 或壓縮失敗: msg.error )
+    if(msg.type === 'chat-compacted') { return p.onCompact && p.onCompact({error: msg.error || null}); }
     if(msg.type === 'chat-done') {
       delete pending[msg.id];
       return p.resolve({reply: msg.reply, events: msg.events});
@@ -216,7 +245,7 @@ export function createRuntime(opt) {
       return new Promise(function(resolve, reject) {
         pending[id] = {
           resolve: resolve, reject: reject,
-          onDelta: cb.onDelta, onTool: cb.onTool, onNudge: cb.onNudge, onProgress: cb.onProgress
+          onDelta: cb.onDelta, onTool: cb.onTool, onNudge: cb.onNudge, onProgress: cb.onProgress, onCompact: cb.onCompact
         };
         worker.postMessage({
           type: 'chat', id: id, text: text,
@@ -253,7 +282,7 @@ export function createRuntime(opt) {
         stat: function(p) { return sh.io.stat(abs(p)); }
       };
       return {
-        worker: worker, sh: sh, io: io, transport: transport,
+        worker: worker, sh: sh, io: io, transport: transport, sessions: sessions, setCompact: setCompact,
         registerHost: registerHost, onFsChange: onFsChange,
         // 更新 device 檔案的內容。應用層是真相, 這裡只是把值推給 worker 的鏡像。
         setDevice: function(name, value) {
