@@ -75,6 +75,31 @@ which becomes a placeholder handed to `fn(spec, {el, send, name})` registered wi
 `base.widget(name, fn)`, once the message is complete. Unregistered names show as a code
 block. Describe the widget's format in your prompt so the model knows when to use it.
 
+## Saving conversations
+
+The agent's conversation lives in the worker's memory. To keep it across page loads
+( or devices, or years ), the host saves it after each turn and imports it next time:
+
+    rt.sessions.export(key, {images: 1})   // what the model sees: {v, provider, model, format, history}
+                                           // images: keep only the newest n screenshots in the copy
+    rt.sessions.import(key, data)          // use it from the next turn on ( converted if the provider differs )
+    base.transcript()                      // chat base: the full log for people to read ( never compacted )
+    base.restore(list)                     // put it back; views redraw on the 'restore' event
+
+`key` is the chat session ( `data.session` of the chat block ) - give the chat block a stable
+one, or the session id is random per page load. Storage is the host's business.
+
+Long conversations get compacted: `createRuntime({compact: {at, keep, provider, model}})`
+( or `rt.setCompact(...)` ) summarises everything but the last `keep` turns with the given
+( usually cheap ) model once the history is estimated above `at` tokens, before a turn
+starts. That is the only time the prefix changes; thinking blocks in the kept turns are
+dropped because they are bound to the old prefix. The chat log is unaffected.
+
+A turn that fails midway keeps the steps already done when the error is retryable
+( credits / quota, throttling, upstream, abort, network, 5xx ) and ends with a short
+interruption note, so "continue" picks up where it stopped. Other errors ( e.g. 400 )
+roll the turn back as before.
+
 ## Models
 
 Each mount decides which models its frontend may use, and the default:

@@ -1,5 +1,21 @@
 # Change Logs
 
+## v0.7.0
+
+ - features:
+   - 對話的保存:`rt.sessions.export(key, {images})` / `rt.sessions.import(key, data)`;
+     chat base 的完整紀錄 `transcript()` / `restore(list)` ( 畫面收到 `restore` 事件重畫 )
+   - 對話壓縮 ( `client/runtime/compact.js` ):`createRuntime({compact: {at, keep, provider, model}})` /
+     `rt.setCompact()`。超過 token 門檻時,在一輪開始前用指定的 ( 便宜的 ) 模型把較舊的部分寫成摘要,
+     最近 keep 輪保留原文並拿掉 thinking;經同一個 llm proxy 呼叫。chat 事件 `chat-compacted` -> `info`
+   - 一輪中途失敗:可以重試的錯誤 ( 額度 / 點數不足、限流、上游、中止、截斷、網路、5xx ) 保留到最後一個
+     完整的步驟,並補一則中斷說明,之後說「繼續」接得上;其他錯誤照舊整輪退回 ( turn-context.js 的 `retainable` )
+ - tweaks:
+   - provider session 多了 `setHistory`
+   - 預設外觀處理 `restore`
+   - `test/retain.mjs`、`test/compact.mjs`
+
+
 ## v0.6.1
 
  - fixes:

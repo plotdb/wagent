@@ -1,5 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated} from '../turn-context.js';
+import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated, retainable, interruptedNote} from '../turn-context.js';
 import {ID, make as lderr} from '../lderr.js';
 import {createProgress} from '../progress.js';
 
@@ -217,8 +217,21 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
         return {reply: msg.content || '', events: events};
       });
     };
+    // 失敗: 可以重試的錯誤保留到最後一個完整的步驟 ( 見 turn-context.js 的〈一輪中途失敗〉 ),
+    // 其他照舊整輪退回
     return step().catch(function(e) {
-      history.length = startLen;
+      if(!retainable(e)) { history.length = startLen; throw e; }
+      // 還沒配齊結果的 tool_calls ( 與它後面的部分結果 ) 拿掉, provider 不接受沒有配對的呼叫
+      for(let i = history.length - 1; i >= startLen; i--) {
+        const m = history[i];
+        if(m.role === 'assistant' && m.tool_calls && m.tool_calls.length) {
+          const got = history.slice(i + 1).filter(function(x) { return x.role === 'tool'; }).length;
+          if(got < m.tool_calls.length) { history.length = i; }
+          break;
+        }
+      }
+      history.push({role: 'assistant', content: interruptedNote(e)});
+      e.retained = true;
       throw e;
     });
   }
@@ -230,6 +243,8 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
     format: 'openai',
     setModel: function(m) { model = m; },
     getModel: function() { return model; },
-    getHistory: function() { return history.slice(1); }
+    getHistory: function() { return history.slice(1); },
+    // 整份換掉 ( 壓縮後, 見 compact.js ); system 留著. 只在兩輪之間呼叫
+    setHistory: function(h) { history = [history[0]].concat(h || []); }
   };
 }
