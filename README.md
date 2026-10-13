@@ -45,10 +45,12 @@ for. Then `import('/assets/lib/@plotdb/wagent/main/runtime/client.js')` and
 
 fedep only copies what *you* list, so wagent's own frontend dependencies are yours to
 list too: `@plotdb/esh` always, `@plotdb/block` ( + proxise / semver / csscope /
-rescope ) for the chat / sandbox blocks, `@zumer/snapdom` for sandbox images, `marked` +
-`dompurify` for markdown in chat messages ( see below ). They are declared as
-`peerDependencies`; all but `@plotdb/esh` are optional, since a page that only uses the
-runtime ( no chat / sandbox block ) needs none of them.
+rescope ) for the chat / sandbox blocks, `@zumer/snapdom` for sandbox images. They are
+declared as `peerDependencies`; all but `@plotdb/esh` are optional, since a page that
+only uses the runtime ( no chat / sandbox block ) needs none of them. `marked` +
+`dompurify` ( markdown in chat messages, see below ) are loaded by the page and are not
+peer dependencies: the backend that installs wagent often pins its own `marked` for
+unrelated build tools, and a peer range would only make that install fail.
 
 ## Chat message formatting
 
