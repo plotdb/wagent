@@ -1,5 +1,12 @@
 # Change Logs
 
+## v0.6.1
+
+ - fixes:
+   - `marked` / `dompurify` 不再列在 `peerDependencies`:它們是頁面載入的前端函式庫,
+     列了只會讓後端的 `npm install` 跟別的套件要的 `marked` 版本衝突 ( 例如 srcbuild 的 marked 4 )
+
+
 ## v0.6.0
 
  - features:
