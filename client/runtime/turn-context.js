@@ -160,3 +160,26 @@ export function wrapTruncated() {
     '(此段由執行環境附上, 不是使用者說的話。)'
   ].join('\n');
 }
+
+// ── 一輪中途失敗 ───────────────────────────────────────────────────
+// 一輪 ( 一次 send ) 裡模型會被呼叫好幾次。中途失敗時, 已經完成的步驟 ( 讀檔、寫檔 ) 不該
+// 跟著消失: 檔案已經改了, 對話卻忘了為什麼改, 使用者說「繼續」時 agent 也接不上。
+// 所以「可以重試」的錯誤保留到最後一個完整的步驟, 並補一則 assistant 說明中斷;
+// 其他錯誤 ( 例如 400: 請求本身有問題 ) 照舊整輪退回 —— 保留壞掉的紀錄會讓之後每一輪都失敗。
+//
+// 可以重試: 額度 / 點數不足、限流、上游服務失敗、使用者中止、回應一直被截斷、
+// 網路錯誤 ( 沒有 status ) 與 5xx
+const RETAIN_IDS = [1004, 1024, 1047, 10001, 11001, 11005, 11012];
+export function retainable(e) {
+  if(!e) { return false; }
+  if(e.name === 'lderror' && RETAIN_IDS.indexOf(+e.id) >= 0) { return true; }
+  if(e.name === 'lderror') { return false; }
+  if(e.status == null) { return true; }
+  return e.status >= 500;
+}
+// 中斷說明 ( 補在保留下來的紀錄最後, 讓紀錄維持一來一往; 下一句話接在它後面 )
+export function interruptedNote(e) {
+  const why = (e && e.message) ? String(e.message).slice(0, 200) : 'error';
+  return '[interrupted] 這一輪在這裡中斷了 ( ' + why + ' )。上面的步驟已經做完, 檔案的變更都還在。' +
+    '使用者之後若要你繼續, 先確認目前檔案的狀態, 再從這裡接著做。';
+}

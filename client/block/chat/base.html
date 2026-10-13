@@ -41,6 +41,10 @@
         this.markdown = d.markdown !== false;
         this.widgets = {};
         this.md = null;          // marked 實例 ( 第一次用得到時建立 )
+        // 畫面用的完整紀錄 ( 見 interface 的 transcript / restore ). 跟送給模型的那份分開:
+        // 那份會被壓縮, 這份永遠完整, 給人回頭看
+        this.log = [];
+        this.seg = '';           // 串流中、還沒收進紀錄的 assistant 文字
       },
       interface: function() {
         var self = this;
@@ -141,6 +145,20 @@
           });
         }
 
+        // ── 畫面用的完整紀錄 ─────────────────────────────────────────────
+        // 一則一筆, 依時間排: {role, at, ...}
+        //   user       {text, auto}            使用者的發話 ( auto: 自動修正之類由程式送出的 )
+        //   assistant  {text}                  模型的文字 ( tool 呼叫前的段落各自一筆 )
+        //   tool       {tool, path, error}     呼叫了哪個 tool ( error: 失敗 )
+        //   error      {message, id, payload}  這一輪失敗
+        //   info       {text}                  系統訊息 ( 例如對話壓縮了 )
+        // host 存起來 ( itf.transcript() ), 下次打開時 itf.restore(list) 還原, 畫面收到 restore 事件重畫
+        function record(e) { e.at = Date.now(); self.log.push(e); return e; }
+        function flushSeg() {
+          if(self.seg) { record({role: 'assistant', text: self.seg}); }
+          self.seg = '';
+        }
+
         // ── progress 事件 ───────────────────────────────────────────────
         // runtime 每次 LLM 呼叫的進度 ( 欄位定義見 client/runtime/progress.js ), 這裡原樣轉出,
         // 再加上本輪的累計 turn。已在 worker 端節流 ( 最多約每 250ms 一則, phase 改變時立即 )。
@@ -192,6 +210,13 @@
             return el;
           },
           widget: function(name, fn) { self.widgets[name] = fn; return self.itf; },
+          // 畫面用的完整紀錄 ( 說明見上方 ): 匯出一份 / 換成之前存的 ( 發 restore 事件讓畫面重畫 )
+          transcript: function() { return self.log.slice(); },
+          restore: function(list) {
+            self.log = Array.isArray(list) ? list.slice() : [];
+            self.seg = '';
+            emit('restore', self.log.slice());
+          },
           // 正在跑嗎 — 畫面靠它決定發話會不會變成排隊
           busy: function() { return self.busy; },
           // 自動修正的開關。預設開 = 出錯就讓 agent 自己修; 關 = 只提議,
@@ -212,6 +237,7 @@
           send: function(text, o) {
             if(self.busy) {
               self.transport && self.transport.nudge(text);
+              record({role: 'user', text: text, queued: true});
               emit('queued', text);
               return Promise.resolve({queued: true});
             }
@@ -221,6 +247,8 @@
             }
             self.busy = true;
             self.turn = {startedAt: Date.now(), calls: 0, cur: null, outDone: 0, inDone: 0};
+            record({role: 'user', text: text, auto: !!(o && o.auto)});
+            self.seg = '';
             emit('busy', true);
             // agent loop 在本機 worker; transport 由 runtime 注入 (createRuntime().transport)
             if(!self.transport) {
@@ -229,13 +257,28 @@
             return self.transport.send(text, {
                 block: self.blockName,
                 session: self.blockName || self.session,
-                onDelta: function(t) { emit('delta', t); },
+                onDelta: function(t) { self.seg += t; emit('delta', t); },
                 // start 用來顯示「正在做什麼」; end 只在失敗時再發一則 (顯示成 ✗)。
                 // 兩段都發的話, 視覺層會每個 tool 畫兩行。
                 onTool: function(ev) {
-                  if(ev.phase !== 'end') { return emit('tool', ev); }
+                  if(ev.phase !== 'end') {
+                    flushSeg();
+                    record({role: 'tool', tool: ev.tool, path: (ev.input && ev.input.path) || null});
+                    return emit('tool', ev);
+                  }
                   noteWrite(ev);
-                  if(ev.error) { emit('tool', ev); }
+                  if(ev.error) {
+                    for(var i = self.log.length - 1; i >= 0; i--) {
+                      if(self.log[i].role === 'tool' && self.log[i].tool === ev.tool) { self.log[i].error = true; break; }
+                    }
+                    emit('tool', ev);
+                  }
+                },
+                // 這一輪開始前把對話壓縮了 ( 見 runtime/compact.js ): 只影響送給模型的那份
+                onCompact: function(c) {
+                  var t = c && c.error ? '對話壓縮失敗 ( ' + c.error + ' ), 這一輪照常進行' : '對話太長, 已把較早的部分壓縮成摘要 ( 畫面上的紀錄不受影響 )';
+                  record({role: 'info', text: t, key: c && c.error ? 'compact-failed' : 'compacted'});
+                  emit('info', t);
                 },
                 // 排隊的訊息真的送進去了 — 讓畫面把「排隊中」改掉
                 onNudge: function(texts) { emit('nudge-taken', texts); },
@@ -244,6 +287,8 @@
                 .then(function(j) {
                   self.busy = false;
                   self.turn = null;
+                  self.seg = '';
+                  record({role: 'assistant', text: j.reply || ''});
                   emit('reply', j.reply || '');
                   emit('busy', false);
                   return j;
@@ -251,6 +296,9 @@
                 .catch(function(e) {
                   self.busy = false;
                   self.turn = null;
+                  flushSeg();
+                  record({role: 'error', message: String((e && e.message) || e),
+                    id: (e && e.id) || null, payload: (e && e.payload) || null});
                   emit('busy', false);
                   emit('error', e);
                   throw e;
@@ -296,7 +344,9 @@
                 // 反而看不到最早的那一個 —— 停在這裡, 說一聲就好。
                 if(self.offers === self.maxOffer) {
                   self.offers++;
-                  emit('info', '渲染持續失敗且錯誤一直在變, 已停止提議 —— 請重新整理或自己看一下。');
+                  var t1 = '渲染持續失敗且錯誤一直在變, 已停止提議 —— 請重新整理或自己看一下。';
+                  record({role: 'info', text: t1});
+                  emit('info', t1);
                 }
                 return;
               }
@@ -310,7 +360,9 @@
               });
               return;
             }
-            emit('info', '渲染錯誤,嘗試自動修正 (' + (self.fixCount + 1) + '/' + self.maxFix + ')');
+            var t2 = '渲染錯誤,嘗試自動修正 (' + (self.fixCount + 1) + '/' + self.maxFix + ')';
+            record({role: 'info', text: t2});
+            emit('info', t2);
             fix();
           });
         }

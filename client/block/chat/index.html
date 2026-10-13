@@ -133,6 +133,19 @@
           addMsg('error', '錯誤: ' + e.message);
         });
         base.on('info', function(t) { addMsg('event', t); });
+        // 還原之前存的對話 ( base.restore ): 清掉畫面, 依紀錄重畫
+        base.on('restore', function(list) {
+          log.innerHTML = '';
+          live = null;
+          list.forEach(function(e) {
+            if(e.role === 'user') { addMsg('user', e.text || ''); }
+            else if(e.role === 'assistant') { base.render(addMsg('assistant md', ''), e.text || '', {final: true}); }
+            else if(e.role === 'tool') { addMsg('event', (e.error ? '✗ ' : '✓ ') + e.tool + (e.path ? ' ' + e.path : '')); }
+            else if(e.role === 'error') { addMsg('error', '錯誤: ' + (e.message || '')); }
+            else if(e.role === 'info') { addMsg('event', e.text || ''); }
+          });
+          log.scrollTop = log.scrollHeight;
+        });
         base.on('block', function(name) { title.textContent = name; });
         // 執行中也能發話 (會排隊), 所以按鈕不 disable, 只換字提示會進 queue
         base.on('busy', function(b) {

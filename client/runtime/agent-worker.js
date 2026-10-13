@@ -7,7 +7,11 @@
 //                      -> {type: 'chat-delta' | 'chat-tool' | 'chat-done' | 'chat-error', id, ...}
 //                         {type: 'chat-progress', id, progress}  每次 LLM 呼叫的進度 ( 欄位見 progress.js ),
 //                         已節流; 只給畫面用, 不進歷史
+//                         {type: 'chat-compacted', id, error?}  這一輪開始前把對話壓縮了 ( 或壓縮失敗 )
 //                      {type: 'chat-reset', session}
+//  - 對話保存層:       {type: 'session-export', rid, key} -> {type: 'session-data', rid, data}
+//                      {type: 'session-import', rid, key, data} -> {type: 'session-imported', rid}
+//                      {type: 'compact-set', opt}  壓縮條件 {at, keep, provider, model} ( 見 compact.js )
 //  - model 層:         {type: 'model-list' | 'model-set', id, ...} -> {type: 'model-result', id, ok, ...}
 //                      切換成功另外廣播 {type: 'model-change', provider, model}
 //  - host 層:          {type: 'host-tools', tools, timeout}   主執行緒註冊額外 tool
@@ -18,6 +22,9 @@ import {createSession as createOpenAI} from './providers/openai.js';
 import {createSession as createAnthropic} from './providers/anthropic.js';
 import {convert} from './providers/convert.js';
 import {createHostCaller, toolSchema} from './host-call.js';
+import {compact as compactHistoryTo} from './compact.js';
+import {countImages, compactHistory} from './turn-context.js';
+import {checkResponse} from './sse.js';
 
 const params = new URL(self.location.href).searchParams;
 const api = params.get('api') || '/api/agent';
@@ -251,6 +258,44 @@ function applyModel(e, pick) {
   return e.s;
 }
 
+// ── 對話的保存與壓縮 ─────────────────────────────────────────────
+// host 把對話存起來 ( 例如伺服器 ), 下次打開時匯入接著聊 ( client.js 的 rt.sessions ).
+//  - imported[key]: 匯入了、還沒建 session 的紀錄. 下一次 getSession 時當作起始歷史
+//    ( provider 不同就先轉換格式 )
+//  - compactOpt: host 設的壓縮條件 ( compact-set ), 每輪開始前檢查 ( 見 compact.js )
+const imported = {};
+let compactOpt = null;
+// opt.images: 匯出的副本只留最新幾張圖 ( 存檔用: base64 的圖很大 ). 有換掉圖時一併拿掉 thinking
+// ( 它綁著前綴, 前綴改了就作廢 ). 只動副本, 記憶體裡的對話不變
+function exportSession(key, opt) {
+  const e = sessions[key];
+  const d = e ? {v: 1, provider: e.provider, model: e.s.getModel(), format: e.s.format, history: e.s.getHistory()} : (imported[key] || null);
+  const n = opt && opt.images;
+  if(d && n >= 0 && countImages(d.history) > n) {
+    d.history = compactHistory(d.history, {keep: n, drop: ['thinking', 'redacted_thinking']});
+  }
+  return d;
+}
+function maybeCompact(key) {
+  const e = sessions[key];
+  if(!(compactOpt && compactOpt.at > 0 && e)) { return Promise.resolve(); }
+  const call = function(body) {
+    return fetch(`${api}/llm/${compactOpt.provider}`, {
+      method: 'POST',
+      headers: Object.assign({'content-type': 'application/json'}, getHeaders()),
+      body: JSON.stringify(body)
+    }).then(checkResponse).then(function(r) { return r.json(); });
+  };
+  return compactHistoryTo(e.s.getHistory(), e.s.format, Object.assign({}, compactOpt, {call: call}))
+    .then(function(h) {
+      if(!h) { return; }
+      e.s.setHistory(h);
+      post({type: 'chat-compacted', id: current});
+    })
+    // 壓縮失敗不擋這一輪 ( 只是沒變短 ); 讓畫面知道一聲
+    .catch(function(err) { post({type: 'chat-compacted', id: current, error: String((err && err.message) || err)}); });
+}
+
 function getSession(key, block) {
   if(sessions[key]) {
     return getInfo().then(function(inf) { return applyModel(sessions[key], currentModel(inf)); });
@@ -297,7 +342,14 @@ function getSession(key, block) {
         maxSteps: maxSteps, softSteps: softSteps, maxImages: maxImages, history: history
       });
     };
-    sessions[key] = {provider: pick.provider, s: make(pick.provider, pick.model), make: make};
+    // 匯入的紀錄 ( 見上方〈對話的保存與壓縮〉 ): 當作起始歷史, provider 不同先轉換
+    let seed;
+    const d = imported[key];
+    if(d && Array.isArray(d.history)) {
+      seed = d.format === pick.provider ? d.history : convert(d.history, d.format, pick.provider);
+      delete imported[key];
+    }
+    sessions[key] = {provider: pick.provider, s: make(pick.provider, pick.model, seed), make: make};
     return sessions[key].s;
   });
 }
@@ -342,6 +394,18 @@ self.addEventListener('message', function(ev) {
     if(deviceNames.indexOf(msg.name) >= 0) { deviceValues[msg.name] = String(msg.value == null ? '' : msg.value); }
     return;
   }
+  if(msg.type === 'compact-set') { compactOpt = msg.opt || null; return; }
+  if(msg.type === 'session-export') {
+    post({type: 'session-data', rid: msg.rid, data: exportSession(msg.key, msg.opt)});
+    return;
+  }
+  if(msg.type === 'session-import') {
+    // 換掉這個 key 的對話: 已經建好的 session 丟掉, 下一輪以匯入的紀錄重建
+    delete sessions[msg.key];
+    if(msg.data && Array.isArray(msg.data.history)) { imported[msg.key] = msg.data; } else { delete imported[msg.key]; }
+    post({type: 'session-imported', rid: msg.rid});
+    return;
+  }
   if(msg.type === 'headers-set') {
     // 整份換掉而不是 merge: 呼叫端才知道哪些還有效, 留著舊的等於送過期的 token
     apiHeaders = (msg.headers && typeof msg.headers === 'object') ? msg.headers : {};
@@ -354,8 +418,11 @@ self.addEventListener('message', function(ev) {
   }
   if(msg.type === 'host-result') { return host.result(msg); }
   if(msg.type === 'chat-reset') {
-    if(msg.session) { delete sessions[msg.session]; }
-    else { Object.keys(sessions).forEach(function(k) { delete sessions[k]; }); }
+    if(msg.session) { delete sessions[msg.session]; delete imported[msg.session]; }
+    else {
+      Object.keys(sessions).forEach(function(k) { delete sessions[k]; });
+      Object.keys(imported).forEach(function(k) { delete imported[k]; });
+    }
     nudges = [];
     return;
   }
@@ -398,6 +465,8 @@ self.addEventListener('message', function(ev) {
     // 就把剩的當作新的一輪繼續 — 沿用同一個 id, 對畫面來說仍是同一次執行。
     function turn(text) {
       return Promise.all([getSession(key, msg.block || null), turnContext()])
+        // 太長就先壓縮 ( 兩輪之間、超過門檻才做, 見 compact.js )
+        .then(function(r) { return maybeCompact(key).then(function() { r[0] = sessions[key].s; return r; }); })
         .then(function(r) {
           return r[0].send(text, {
             context: r[1],
