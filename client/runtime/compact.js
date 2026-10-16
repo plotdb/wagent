@@ -80,10 +80,15 @@ export const SUMMARY_PROMPT = [
   'Do not invent details. Plain text or short bullet points, no preamble.'
 ].join('\n');
 
-// 壓縮後的開頭兩則 ( 摘要 + 確認 ), 讓紀錄仍是一來一往
-export function summaryMessages(summary, format) {
-  const head = SUMMARY_TAG + ' 以下是先前對話的摘要 ( 較早的部分已壓縮, 細節以目前的檔案為準 ):\n\n' + summary;
-  const ack = '了解, 我會依照這份摘要接著做。';
+// 壓縮後的開頭兩則 ( 摘要 + 確認 ), 讓紀錄仍是一來一往. lang: 'zh' ( 預設 ) / 'en'
+const HEAD = {
+  zh: {head: ' 以下是先前對話的摘要 ( 較早的部分已壓縮, 細節以目前的檔案為準 ):\n\n', ack: '了解, 我會依照這份摘要接著做。'},
+  en: {head: ' Summary of the earlier conversation ( the older part was compacted; the current files are the source of truth for details ):\n\n', ack: 'Understood, I will continue based on this summary.'}
+};
+export function summaryMessages(summary, format, lang) {
+  const t = HEAD[lang] || HEAD.zh;
+  const head = SUMMARY_TAG + t.head + summary;
+  const ack = t.ack;
   if(format === 'openai') {
     return [{role: 'user', content: head}, {role: 'assistant', content: ack}];
   }
@@ -116,11 +121,11 @@ export function summarize({history, format, provider, model, call}) {
 }
 
 // 壓縮一份紀錄. 回傳新的紀錄; 不需要 ( 沒超過門檻或輪數不夠 ) 回 null
-//   opt: {at ( token 門檻 ), keep ( 保留幾輪 ), provider, model ( 摘要用 ), call}
+//   opt: {at ( token 門檻 ), keep ( 保留幾輪 ), provider, model ( 摘要用 ), call, lang ( 摘要開頭那兩則的語言 )}
 export function compact(history, format, opt) {
   if(!(opt && opt.at > 0) || estimateTokens(history) < opt.at) { return Promise.resolve(null); }
   const cut = splitPoint(history, format, opt.keep);
   if(cut <= 0) { return Promise.resolve(null); }
   return summarize({history: history.slice(0, cut), format: format, provider: opt.provider, model: opt.model, call: opt.call})
-    .then(function(summary) { return summaryMessages(summary, format).concat(stripThinking(history.slice(cut), format)); });
+    .then(function(summary) { return summaryMessages(summary, format, opt.lang).concat(stripThinking(history.slice(cut), format)); });
 }

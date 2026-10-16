@@ -23,7 +23,11 @@ const DEFAULTS = {
   // 對話歷史裡最多留幾張圖。歷史是 append-only (改舊訊息會打掉 prompt cache, 也會讓
   // Claude 的 thinking 作廢), 所以圖不再逐張換佔位; 超過這個數時才一次重建、只留最新一張。
   // 不給就是 runtime 的預設 (20), 見 turn-context.js 的〈圖的上限〉。
-  maxImages: 0
+  maxImages: 0,
+  // 'zh' / 'en': 執行環境給模型看的說明 ( 每輪的 context、步數上限、中斷說明、壓縮摘要的開頭 ) 用哪個語言,
+  // 回報在 rt.lang ( chat / sandbox block 的介面不跟它, 走 block i18n )。不給就跟著掛載點 ( wagent({lang}) ) —— 多數情況不必設。
+  // system prompt 永遠是掛載點的語言 ( 後端決定 ), 這裡改不動它
+  lang: null
 };
 
 export function createRuntime(opt) {
@@ -55,7 +59,8 @@ export function createRuntime(opt) {
     (o.agentRoot ? `&agentRoot=${encodeURIComponent(o.agentRoot)}` : '') +
     (o.maxSteps ? `&maxSteps=${encodeURIComponent(o.maxSteps)}` : '') +
     (o.softSteps ? `&softSteps=${encodeURIComponent(o.softSteps)}` : '') +
-    (o.maxImages ? `&maxImages=${encodeURIComponent(o.maxImages)}` : '');
+    (o.maxImages ? `&maxImages=${encodeURIComponent(o.maxImages)}` : '') +
+    (o.lang ? `&lang=${encodeURIComponent(o.lang)}` : '');
   const worker = new Worker(url, {type: 'module'});
   const prefix = `c${Math.random().toString(36).slice(2, 8)}-`;
   let seq = 0;
@@ -263,9 +268,16 @@ export function createRuntime(opt) {
     }
   };
 
-  return import(o.eshRemote)
-    .then(function(remote) { return remote.connectShell(worker); })
-    .then(function(sh) {
+  // 沒指定語言就問掛載點 ( /provider 會回報 lang )。問不到 ( 舊版後端、header 不對 ) 不擋, 就是 zh
+  const langReady = o.lang ? Promise.resolve(o.lang) : fetch(`${o.api}/provider`, {headers: o.headers || {}})
+    .then(function(r) { return r.ok ? r.json() : {}; })
+    .then(function(j) { return (j && j.lang) || 'zh'; })
+    .catch(function() { return 'zh'; });
+
+  return Promise.all([import(o.eshRemote).then(function(remote) { return remote.connectShell(worker); }), langReady])
+    .then(function(r) {
+      const sh = r[0];
+      const lang = r[1];
       function abs(p) {
         return (p || '').charAt(0) === '/' ? p : `${o.root}/${p}`;
       }
@@ -318,6 +330,7 @@ export function createRuntime(opt) {
           return modelCall({type: 'model-set', model: m || null}).then(function(r) { return r.current; });
         },
         onModelChange: onModelChange,
+        lang: lang,
         root: o.root, workerUrl: url
       };
     });

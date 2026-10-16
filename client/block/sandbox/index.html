@@ -1,10 +1,10 @@
 <div>
   <div class="rc-sandbox-bar">
-    <select><option value="">— 選擇 block —</option></select>
-    <button title="重新渲染">↻</button>
+    <select><option value="" t="choose"></option></select>
+    <button>↻</button>
   </div>
   <div class="rc-sandbox-stage">
-    <div class="rc-sandbox-empty">尚無內容 — 用對話建立 block,或從上方選單選擇</div>
+    <div class="rc-sandbox-empty" t="empty"></div>
   </div>
   <style>
     /* :scope 會被 csscope 換成 scope root 本身的 selector */
@@ -17,11 +17,20 @@
   </style>
   <!-- sandbox 預設視覺層: extend sandbox-base。用戶可 extend sandbox-base 自訂視覺。 -->
   <script type="@plotdb/block">
+    // 介面字串 ( @plotdb/block 原生 i18n 的資源 ); 取字串的順序見 base.html 的 translator:
+    // data.strings > data.lang > block i18n ( extend 這個 block 給自己的 pkg.i18n 就能覆寫 ) > 內建 en
+    var ZH = {choose: '— 選擇 block —', refresh: '重新渲染', empty: '尚無內容 — 用對話建立 block,或從上方選單選擇', failed: '渲染失敗: {message}'};
+    var I18N = {
+      en: {choose: '— choose a block —', refresh: 'Re-render', empty: 'Nothing here yet — create a block in the chat, or pick one from the menu above', failed: 'Render failed: {message}'},
+      zh: ZH,
+      'zh-TW': ZH
+    };
     module.exports = {
       pkg: {
         name: 'sandbox',
         version: 'main',
         description: 'sandbox 預設視覺: block 選單 + 預覽區',
+        i18n: I18N,
         // bid (name + path) 而不是通用名字 'sandbox-base' —— 後者要求 host 的 registry
         // 認得那個名字, 等於在模組之間留下隱涵假設。path 相對於本模組的資產目錄。
         extend: {name: '@plotdb/wagent', path: 'block/sandbox/base.html', dom: 'overwrite'}
@@ -32,13 +41,33 @@
         var select = root.querySelector('select');
         var refreshBtn = root.querySelector('button');
         var stage = root.querySelector('.rc-sandbox-stage');
+        var t = base.translator ? base.translator(I18N) : function(k, p) {
+          var v = I18N.en[k];
+          return typeof v === 'string' ? v.replace(/\{(\w+)\}/g, function(m, x) { return p && p[x] != null ? p[x] : m; }) : k;
+        };
+        function esc(v) { return String(v).replace(/[&<>"]/g, function(c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+        // 靜態的字串: t 屬性已由 block i18n 換過, 再套一次讓 data.strings / data.lang / 找不到就 en 生效 ( 見 chat/index.html )
+        function applyStatic() {
+          refreshBtn.title = t('refresh');
+          var empty = stage.querySelector('.rc-sandbox-empty');
+          if(empty && !empty.dataset.failed) {
+            empty.textContent = t('empty');
+            if(!(t.native && t.native('empty'))) { empty.removeAttribute('t'); }
+          }
+        }
+        applyStatic();
+        if(!t.lang && opt.i18n && typeof opt.i18n.on === 'function') {
+          this.onLang = function() { applyStatic(); reloadList(); };
+          this.i18nModule = opt.i18n;
+          opt.i18n.on('languageChanged', this.onLang);
+        }
 
         function reloadList() {
           return base.list().then(function(list) {
             // 應用層沒提供清單 (例如只編輯單一 block) 就不顯示切換選單
             select.style.display = list.length ? '' : 'none';
             var cur = base.current();
-            select.innerHTML = '<option value="">— 選擇 block —</option>' +
+            select.innerHTML = '<option value="">' + esc(t('choose')) + '</option>' +
               list.map(function(b) {
                 return '<option value="' + b.name + '"' + (b.name === cur ? ' selected' : '') + '>' +
                   b.name + '</option>';
@@ -52,7 +81,7 @@
           el.style.minHeight = '400px';
           stage.appendChild(el);
           base.render(name, el).catch(function(e) {
-            stage.innerHTML = '<div class="rc-sandbox-empty">渲染失敗: ' + e.message + '</div>';
+            stage.innerHTML = '<div class="rc-sandbox-empty" data-failed="1">' + esc(t('failed', {message: e.message})) + '</div>';
             console.error(e);
           });
           reloadList();
@@ -64,6 +93,9 @@
         refreshBtn.onclick = function() { base.refresh(); };
 
         reloadList();
+      },
+      destroy: function() {
+        if(this.onLang && this.i18nModule && this.i18nModule.off) { this.i18nModule.off('languageChanged', this.onLang); }
       },
       interface: function() { return this.base; }
     };

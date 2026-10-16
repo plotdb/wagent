@@ -1,5 +1,32 @@
 # Change Logs
 
+## v0.8.0
+
+ - features:
+   - 語言選項:掛載點 `wagent({lang: 'en'})` 讓給模型看的內容與 proxy 的錯誤訊息用英文;預設 `zh`,與 0.7 一字不差
+     - 後端:system prompt ( block / plain 兩種 preset ) 與 proxy 回給前端的額度錯誤訊息;
+       `lang` 打錯在掛載時就丟錯 ( 同 `preset` );`GET <mount>/provider` 與 `/prompt` 回報 `lang`
+     - runtime:`createRuntime({lang})` 選用,不給就問掛載點;給模型看的執行環境說明 ( 每輪 context、
+       步數上限、截斷、中斷說明、壓縮摘要的開頭 ) 跟著它;`rt.lang`
+   - chat / sandbox block 的介面字串改用 @plotdb/block 原生 i18n:資源在 `pkg.i18n` ( `en` / `zh` / `zh-TW` ),
+     鍵是語意名稱,動態的部分用 `{name}` 之類的佔位 ( 鍵與佔位見 README「Block UI strings」 )
+     - 取字串的順序:`data.strings[key]` ( 字串或函式 ) > `data.lang` ( 直接用內建的那一份, 不經 block i18n )
+       > block i18n ( `[衍生 block:key, ...extends:key, key]`, host extend 並給自己的 `pkg.i18n` 就能覆寫 ) > 內建 en
+     - 靜態 markup 用 `t` 屬性;`languageChanged` 時靜態字串跟著換
+     - 自訂視覺層:`base.translator(資源)` 取得同樣順序的 `tr(key, params)`;chat base 另有 `base.tr`
+ - 行為改變:
+   - chat / sandbox 的介面沒給 `data.lang` 時跟著 block i18n 的語言。block 預設模組的語言是 `en`,
+     所以沒設定的 host 會看到**英文介面** ( 先前是中文 );要中文就給 `data.lang: 'zh'`,
+     或 `block.i18n.changeLanguage('zh-TW')`。自動修正送給 agent 的訊息也跟著介面語言
+ - tweaks:
+   - `prompt.compose(purpose, block, preset, lang)`、`prompt.lang(name)`;英文版另外匯出 `PRESETS_EN` 等
+   - turn-context.js 的各函式多一個 `lang` 參數 ( 最後一個 ),compact 的 opt 多 `lang`
+   - `test/lang.mjs`:en 的 prompt / 執行環境說明沒有中文、預設等於 zh、打錯字在掛載時丟錯、介面字串的取用順序
+   - `test/block-i18n.mjs`:以 playwright + 真的 block 驗 extend 覆寫、data.strings / data.lang、換語言
+     ( 沒有 chromium 就略過 )
+   - sandbox 渲染失敗的訊息改為跳脫後顯示
+
+
 ## v0.7.0
 
  - features:
