@@ -1,31 +1,78 @@
 <div>
   <!-- chat base 層: headless, 只有邏輯。視覺由 extend 此 block 的 derived 層實作。 -->
   <script type="@plotdb/block">
-    // 這一層會說出口的話 ( 給 agent 的自動修正訊息、info 事件 )。視覺層的字串在各自的檔案裡 ( 見 index.html )。
-    // data.lang 選語言, data.strings 個別覆寫 ( 值可以是字串, 或回傳字串的函式 —— 帶參數的那幾個會收到參數 )
-    var TEXT = {
-      zh: {
-        noTransport: 'chat: 缺少 transport — 用 createRuntime() 取得後傳進來',
-        compactFailed: function(err) { return '對話壓縮失敗 ( ' + err + ' ), 這一輪照常進行'; },
-        compacted: '對話太長, 已把較早的部分壓縮成摘要 ( 畫面上的紀錄不受影響 )',
-        fixRequest: function(name, message) { return '前端渲染 block「' + name + '」時發生錯誤:\n' + message + '\n請 read_file 檢查並修正這個 block。'; },
-        fixGaveUp: '渲染持續失敗且錯誤一直在變, 已停止提議 —— 請重新整理或自己看一下。',
-        fixTrying: function(n, max) { return '渲染錯誤,嘗試自動修正 (' + n + '/' + max + ')'; }
-      },
+    // 這一層會說出口的話 ( 給 agent 的自動修正訊息、info 事件 )。視覺層的字串在各自的檔案裡 ( 見 index.html )
+    var ZH = {
+      noTransport: 'chat: 缺少 transport — 用 createRuntime() 取得後傳進來',
+      compactFailed: '對話壓縮失敗 ( {error} ), 這一輪照常進行',
+      compacted: '對話太長, 已把較早的部分壓縮成摘要 ( 畫面上的紀錄不受影響 )',
+      fixRequest: '前端渲染 block「{name}」時發生錯誤:\n{message}\n請 read_file 檢查並修正這個 block。',
+      fixGaveUp: '渲染持續失敗且錯誤一直在變, 已停止提議 —— 請重新整理或自己看一下。',
+      fixTrying: '渲染錯誤,嘗試自動修正 ({n}/{max})'
+    };
+    var I18N = {
       en: {
         noTransport: 'chat: no transport — get one from createRuntime() and pass it in',
-        compactFailed: function(err) { return 'Failed to compact the conversation ( ' + err + ' ); this turn goes ahead as usual'; },
+        compactFailed: 'Failed to compact the conversation ( {error} ); this turn goes ahead as usual',
         compacted: 'The conversation got long, so the earlier part was compacted into a summary ( the log on screen is unaffected )',
-        fixRequest: function(name, message) { return 'An error occurred while rendering block "' + name + '" in the frontend:\n' + message + '\nPlease read_file to inspect and fix this block.'; },
+        fixRequest: 'An error occurred while rendering block "{name}" in the frontend:\n{message}\nPlease read_file to inspect and fix this block.',
         fixGaveUp: 'Rendering keeps failing and the error keeps changing, so no more fix offers — please reload or take a look yourself.',
-        fixTrying: function(n, max) { return 'Render error, trying to fix it automatically (' + n + '/' + max + ')'; }
-      }
+        fixTrying: 'Render error, trying to fix it automatically ({n}/{max})'
+      },
+      zh: ZH,
+      'zh-TW': ZH
     };
+    // ── 字串 ( i18n ) ────────────────────────────────────────────────────
+    // 資源放在 pkg.i18n ( @plotdb/block 原生的 i18n ), 鍵是語意名稱, 動態的部分寫成 {name} 之類的佔位,
+    // 由這裡代入 ( block 預設的 i18n 模組不做代換 )。取字串的順序:
+    //   1. data.strings[key]    個別覆寫: 字串 ( 一樣可用佔位 ), 或函式 fn(params)
+    //   2. data.lang            明講語言: 直接用內建的那一份 ( 不經 block i18n, 所以 extend 的 i18n 覆寫此時無效 )
+    //   3. block i18n           opt.t: 依 [衍生 block:key, ...extends:key, key] 找, 語言是 block.i18n 的目前語言 ——
+    //                           host extend 這個 block 並給自己的 pkg.i18n 就能換掉任一個字串
+    //   找不到 ( 回傳的是 key 本身 ) 就用內建的 en
+    // translator(res, o): res = 內建資源 {en, zh, ...}; o = {strings, lang, t}
+    function translator(res, o) {
+      res = res || {};
+      o = o || {};
+      function pick(table, key) {
+        var v = table;
+        String(key).split('.').forEach(function(k) { v = v == null ? v : v[k]; });
+        return typeof v === 'string' ? v : null;
+      }
+      function fill(s, p) {
+        if(!p) { return s; }
+        return String(s).replace(/\{(\w+)\}/g, function(m, k) { return p[k] != null ? String(p[k]) : m; });
+      }
+      function builtin(lng) {
+        var l = String(lng);
+        return res[l] || res[l.split('-')[0]] || res.en || {};
+      }
+      function has(key) { return !!(o.strings && Object.prototype.hasOwnProperty.call(o.strings, key) && o.strings[key] != null); }
+      var tr = function(key, p) {
+        var v = null;
+        if(has(key)) {
+          v = o.strings[key];
+          return typeof v === 'function' ? String(v(p || {})) : fill(v, p);
+        }
+        if(o.lang) { v = pick(builtin(o.lang), key); }
+        else if(typeof o.t === 'function') {
+          try { v = o.t(key); } catch(e) { v = null; }
+          if(typeof v !== 'string' || v === key || !v) { v = null; }
+        }
+        if(v == null) { v = pick(res.en || {}, key); }
+        return v == null ? key : fill(v, p);
+      };
+      // 這個 key 是不是交給 block i18n ( 不是 data.strings / data.lang 決定的 ) —— 靜態 markup 的 t 屬性要不要留
+      tr.native = function(key) { return !has(key) && !o.lang; };
+      tr.lang = o.lang || null;
+      return tr;
+    }
     module.exports = {
       pkg: {
         name: 'chat-base',
         version: 'main',
-        description: 'chat 邏輯層: 對話 api 溝通、事件廣播 (不決定畫面)'
+        description: 'chat 邏輯層: 對話 api 溝通、事件廣播 (不決定畫面)',
+        i18n: I18N
       },
       init: function(opt) {
         var d = opt.data || {};
@@ -36,10 +83,9 @@
         // d.transport: browser runtime 注入 ({send(text, cb), reset()})。必要 —
         // agent loop 在本機 worker 裡, chat 只是它的介面層。
         this.transport = d.transport || null;
-        // 語言: data.lang > runtime 的語言 ( createRuntime 會跟著掛載點 ) > zh。
-        // data.strings: 個別覆寫字串 ( 本層與視覺層共用同一份, 見 TEXT 與 index.html )
-        this.lang = d.lang || (d.transport && d.transport.lang) || (d.models && d.models.lang) || 'zh';
-        this.strings = d.strings || {};
+        // 字串: data.strings > data.lang > block i18n ( 見上方 translator )。本層與視覺層共用同一組設定
+        this.i18nOpt = {strings: d.strings || null, lang: d.lang || null, t: opt.t || (opt.i18n && opt.i18n.t) || null};
+        this.tr = translator(I18N, this.i18nOpt);
         // d.models: 選用, 有 listModels / setModel / onModelChange 的物件 (通常就是 runtime)。
         // 給了, 畫面就能讓使用者在對話中換模型。
         this.models = d.models || null;
@@ -76,12 +122,7 @@
         function emit(ev, data) {
           (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
         }
-        // 取字串: data.strings 的覆寫 > 這個語言的表 > zh 的表。函式就帶參數呼叫
-        function t(key) {
-          var v = key in self.strings ? self.strings[key] : ((TEXT[self.lang] || TEXT.zh)[key]);
-          if(v === undefined) { v = TEXT.zh[key]; }
-          return typeof v === 'function' ? v.apply(null, Array.prototype.slice.call(arguments, 1)) : v;
-        }
+        var t = self.tr;
         // chat 不決定畫面。「什麼時候該重畫」屬於 application —
         // 只有它知道現在畫的是什麼、編輯範圍到哪, 而且變更的來源不只 agent
         // (使用者的終端機、頁面上的 codemirror 都算)。改由 host 的 fs 變更事件驅動。
@@ -232,9 +273,10 @@
             return self.itf;
           },
           block: function() { return self.blockName; },
-          // 語言與覆寫的字串 ( 視覺層用它們組自己的字串表, 見 index.html )
-          lang: function() { return self.lang; },
-          strings: function() { return self.strings; },
+          // 字串 ( 見上方 translator ): tr(key, params) 取本層的字串;
+          // 視覺層用 translator(自己的內建資源) 取得同樣順序 ( data.strings > data.lang > block i18n ) 的 tr
+          tr: function(key, p) { return self.tr(key, p); },
+          translator: function(res) { return translator(res, self.i18nOpt); },
           // 訊息格式化 ( 說明見上方「訊息格式化」 )
           format: function(text) { return format(text); },
           render: function(el, text, o) {
@@ -309,7 +351,7 @@
                 },
                 // 這一輪開始前把對話壓縮了 ( 見 runtime/compact.js ): 只影響送給模型的那份
                 onCompact: function(c) {
-                  var m = c && c.error ? t('compactFailed', c.error) : t('compacted');
+                  var m = c && c.error ? t('compactFailed', {error: c.error}) : t('compacted');
                   record({role: 'info', text: m, key: c && c.error ? 'compact-failed' : 'compacted'});
                   emit('info', m);
                 },
@@ -361,7 +403,7 @@
             var fix = function() {
               self.fixCount++;
               self.offered = null;   // 送出去了, 之後再壞就是新的一件事
-              return self.itf.send(t('fixRequest', o.name, o.message), {auto: true}).catch(function() {});
+              return self.itf.send(t('fixRequest', {name: o.name, message: o.message}), {auto: true}).catch(function() {});
             };
             // 提議而不是逕自去修: 開關關著, 或自動修正已經試到上限。
             // 兩種情況都給使用者同一個出口 — 一顆按鈕, 按了才送。
@@ -389,7 +431,7 @@
               });
               return;
             }
-            var t2 = t('fixTrying', self.fixCount + 1, self.maxFix);
+            var t2 = t('fixTrying', {n: self.fixCount + 1, max: self.maxFix});
             record({role: 'info', text: t2});
             emit('info', t2);
             fix();

@@ -15,7 +15,7 @@
     "start": "node server.js",
     "setup": "fedep",
     "log": "tail -n 100 -f logs/server.log",
-    "test": "node test/node-esh.mjs && node test/nudge.mjs && node test/steps.mjs && node test/truncate.mjs && node test/lderr.mjs && node test/budget.mjs && node test/usage.mjs && node test/preset.mjs && node test/models.mjs && node test/append-only.mjs && node test/host-timeout.mjs && node test/progress.mjs && node test/retain.mjs && node test/compact.mjs && node test/lang.mjs",
+    "test": "node test/node-esh.mjs && node test/nudge.mjs && node test/steps.mjs && node test/truncate.mjs && node test/lderr.mjs && node test/budget.mjs && node test/usage.mjs && node test/preset.mjs && node test/models.mjs && node test/append-only.mjs && node test/host-timeout.mjs && node test/progress.mjs && node test/retain.mjs && node test/compact.mjs && node test/lang.mjs && node test/block-i18n.mjs",
     "release": "npx fedep publish -g --skip-dist"
   },
   "license": "MIT",

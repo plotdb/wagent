@@ -25,7 +25,7 @@ const DEFAULTS = {
   // 不給就是 runtime 的預設 (20), 見 turn-context.js 的〈圖的上限〉。
   maxImages: 0,
   // 'zh' / 'en': 執行環境給模型看的說明 ( 每輪的 context、步數上限、中斷說明、壓縮摘要的開頭 ) 用哪個語言,
-  // 也是 chat block 介面的預設語言 ( rt.lang )。不給就跟著掛載點 ( wagent({lang}) ) —— 多數情況不必設。
+  // 回報在 rt.lang ( chat / sandbox block 的介面不跟它, 走 block i18n )。不給就跟著掛載點 ( wagent({lang}) ) —— 多數情況不必設。
   // system prompt 永遠是掛載點的語言 ( 後端決定 ), 這裡改不動它
   lang: null
 };
@@ -278,8 +278,6 @@ export function createRuntime(opt) {
     .then(function(r) {
       const sh = r[0];
       const lang = r[1];
-      // chat block 沒給 data.lang 時從 transport 拿 ( 見 block/chat/base.html )
-      transport.lang = lang;
       function abs(p) {
         return (p || '').charAt(0) === '/' ? p : `${o.root}/${p}`;
       }

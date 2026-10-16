@@ -55,8 +55,9 @@ unrelated build tools, and a peer range would only make that install fail.
 
 ## Language
 
-Everything the end user or the model sees can be in Chinese ( `zh`, the default — unchanged
-from 0.7 ) or English ( `en` ). Set it once on the mount; the frontend follows it:
+What the model sees ( system prompt, runtime notes ) and the proxy's errors can be in Chinese
+( `zh`, the default — unchanged from 0.7 ) or English ( `en` ). Set it once on the mount; the runtime
+follows it. The chat / sandbox UI is localized separately, with block i18n ( below ):
 
     app.use('/api/agent', require('@plotdb/wagent')({lang: 'en', purpose: '...'}));
 
@@ -66,17 +67,83 @@ from 0.7 ) or English ( `en` ). Set it once on the mount; the frontend follows i
  - runtime: `createRuntime({lang})` is optional; without it the runtime asks the mount
    ( `GET <mount>/provider` ) and falls back to `zh`. It sets the language of the notes the runtime
    adds for the model ( per-turn context, step limit, truncation, interruption, the compaction
-   summary header ) and is exposed as `rt.lang` / `rt.transport.lang`. The system prompt always
-   comes from the mount.
- - chat block: `data.lang` ( default: the runtime's language via `data.transport` / `data.models`,
-   else `zh` ) for its UI and for the auto-fix message it sends the agent. `data.strings` overrides
-   single strings by key — a string, or a function for the keys that take arguments
-   ( e.g. `{send: 'Go', greetEdit: function(name) { return 'Editing ' + name; }}` ). Keys are those in
-   the `TEXT` tables of `client/block/chat/index.html` ( UI ) and `base.html` ( messages ).
-   A derived view reads them through `base.lang()` / `base.strings()`.
- - sandbox block: same `data.lang` / `data.strings` for its default view ( `client/block/sandbox/index.html` );
-   it has no runtime to follow, so pass `lang` explicitly. The snapshot report the agent reads is English
-   either way.
+   summary header ) and is exposed as `rt.lang`. The system prompt always comes from the mount.
+ - chat / sandbox blocks: their UI strings use **@plotdb/block's own i18n** ( below ), not the mount's
+   `lang` — the page decides the UI language the same way it does for its other blocks.
+
+### Block UI strings
+
+The chat and sandbox blocks keep their strings as `pkg.i18n` resources ( `en`, `zh`, `zh-TW` ) with
+semantic keys. Static markup uses `t="key"` / `t-placeholder="key"`, which @plotdb/block translates when
+the DOM is created ( and again on `languageChanged` if the host attaches with `autoTransform: 'i18n'`;
+the blocks also listen to `languageChanged` themselves for their static strings ). A string is looked up in this order:
+
+ 1. `data.strings[key]` - a string ( same placeholders ), or `function(params)` returning one
+ 2. `data.lang` - if given, wagent's built-in resource for that language is used directly
+    ( `zh-TW` -> `zh-TW`, `zh-HK` -> `zh`, unknown -> `en` ). Block i18n is bypassed, so `extend`
+    overrides do **not** apply in this mode.
+ 3. block i18n - the instance's `t()`: `[<derived block>:key, ...extended blocks:key, key]` in
+    `block.i18n`'s current language ( the default module starts at `en`; switch with
+    `block.i18n.changeLanguage('zh-TW')` or `block.i18n.use(i18next)` ).
+ 4. not found ( the lookup returns the key itself ) -> the built-in `en` string.
+
+To override strings the block way, extend the block and give your own resources; keys you leave out
+fall through to wagent's:
+
+    <div><script type="@plotdb/block">
+    module.exports = {
+      pkg: {
+        name: 'my-chat', version: 'main',
+        extend: {name: '@plotdb/wagent', path: 'block/chat/index.html'},
+        i18n: {en: {send: 'Go', greetEdit: 'Working on {name}.'}, 'zh-TW': {send: '送'}}
+      },
+      init: function() {}
+    };
+    </script></div>
+
+The default i18n module does no interpolation, so dynamic strings carry `{placeholders}` that wagent
+fills in itself — an override must use the same names. A custom view built on `chat/base.html` or
+`sandbox/base.html` gets the same order with `base.translator(myResources)` -> `tr(key, params)`;
+`base.tr(key, params)` ( chat ) reads chat-base's own strings.
+
+chat, view ( `client/block/chat/index.html` ):
+
+| key | en | placeholders |
+|---|---|---|
+| `autoFixLabel` / `autoFixTitle` | Auto-fix errors / tooltip | |
+| `autoFixOn` / `autoFixOff` | message when toggled | |
+| `modelTitle` | model menu tooltip | |
+| `placeholder` | input placeholder | |
+| `send` / `sendQueued` | Send / Queue | |
+| `queuedTitle` | tooltip on a queued message | |
+| `thinking` / `working` | Thinking… / Working… | |
+| `noReply` | (no reply) | |
+| `error` | Error: … | `{message}` |
+| `verb.write_file` `verb.edit_file` `verb.read_file` `verb.run_shell` `verb.snapshot` | status-line verbs | |
+| `phaseWaiting` `phaseThinking` `phaseText` `phaseError` `phaseBetween` | status-line phases | |
+| `tokens` | tokens | |
+| `turn` | this turn … | `{time}` `{calls}` `{out}` |
+| `fixLimit` / `fixFailed` | fix offer text | `{message}` |
+| `fixButton` / `fixSent` / `fixSentNote` | fix offer button and note | |
+| `newTitle` | New block | |
+| `greetEdit` / `greetNew` | first message | `{name}` ( greetEdit ) |
+| `noKey` | No API key configured (.env) | |
+| `modelNext` / `modelFailed` | model switch messages | `{provider}` `{model}` / `{message}` |
+
+chat, base ( `client/block/chat/base.html` ) - `fixRequest` is sent **to the agent**:
+
+| key | placeholders |
+|---|---|
+| `noTransport` | |
+| `compacted` / `compactFailed` | `{error}` ( compactFailed ) |
+| `fixRequest` | `{name}` `{message}` |
+| `fixGaveUp` | |
+| `fixTrying` | `{n}` `{max}` |
+
+sandbox ( `client/block/sandbox/index.html` ): `choose`, `refresh`, `empty`, `failed` ( `{message}` ).
+
+`data.strings` keys are flat ( `'verb.write_file'` ). The snapshot report the agent reads is English
+regardless.
 
 ## Chat message formatting
 

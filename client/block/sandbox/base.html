@@ -1,6 +1,53 @@
 <div>
   <!-- sandbox base 層: headless, 負責載入並執行 workspace block, 對外提供操作 api。 -->
   <script type="@plotdb/block">
+    // ── 字串 ( i18n ) ────────────────────────────────────────────────────
+    // 資源放在 pkg.i18n ( @plotdb/block 原生的 i18n ), 鍵是語意名稱, 動態的部分寫成 {name} 之類的佔位,
+    // 由這裡代入 ( block 預設的 i18n 模組不做代換 )。取字串的順序:
+    //   1. data.strings[key]    個別覆寫: 字串 ( 一樣可用佔位 ), 或函式 fn(params)
+    //   2. data.lang            明講語言: 直接用內建的那一份 ( 不經 block i18n, 所以 extend 的 i18n 覆寫此時無效 )
+    //   3. block i18n           opt.t: 依 [衍生 block:key, ...extends:key, key] 找, 語言是 block.i18n 的目前語言 ——
+    //                           host extend 這個 block 並給自己的 pkg.i18n 就能換掉任一個字串
+    //   找不到 ( 回傳的是 key 本身 ) 就用內建的 en
+    // 這一層沒有自己的字串 ( 給 agent 的 snapshot 報告是固定的英文欄位 ), 只替視覺層提供 translator。
+    // 與 chat/base.html 的 translator 相同 —— 改一邊就要改另一邊
+    // translator(res, o): res = 內建資源 {en, zh, ...}; o = {strings, lang, t}
+    function translator(res, o) {
+      res = res || {};
+      o = o || {};
+      function pick(table, key) {
+        var v = table;
+        String(key).split('.').forEach(function(k) { v = v == null ? v : v[k]; });
+        return typeof v === 'string' ? v : null;
+      }
+      function fill(s, p) {
+        if(!p) { return s; }
+        return String(s).replace(/\{(\w+)\}/g, function(m, k) { return p[k] != null ? String(p[k]) : m; });
+      }
+      function builtin(lng) {
+        var l = String(lng);
+        return res[l] || res[l.split('-')[0]] || res.en || {};
+      }
+      function has(key) { return !!(o.strings && Object.prototype.hasOwnProperty.call(o.strings, key) && o.strings[key] != null); }
+      var tr = function(key, p) {
+        var v = null;
+        if(has(key)) {
+          v = o.strings[key];
+          return typeof v === 'function' ? String(v(p || {})) : fill(v, p);
+        }
+        if(o.lang) { v = pick(builtin(o.lang), key); }
+        else if(typeof o.t === 'function') {
+          try { v = o.t(key); } catch(e) { v = null; }
+          if(typeof v !== 'string' || v === key || !v) { v = null; }
+        }
+        if(v == null) { v = pick(res.en || {}, key); }
+        return v == null ? key : fill(v, p);
+      };
+      // 這個 key 是不是交給 block i18n ( 不是 data.strings / data.lang 決定的 ) —— 靜態 markup 的 t 屬性要不要留
+      tr.native = function(key) { return !has(key) && !o.lang; };
+      tr.lang = o.lang || null;
+      return tr;
+    }
     module.exports = {
       pkg: {
         name: 'sandbox-base',
@@ -58,9 +105,8 @@
         this.lastError = null;
         this.sigs = {};         // 各 snapshot 情境的上次簽名, 用來算差異量
         this.handlers = {};
-        // 視覺層的語言與字串覆寫 ( 見 index.html )。給 agent 的 snapshot 報告是固定的英文欄位, 不受影響
-        this.lang = d.lang || 'zh';
-        this.strings = d.strings || {};
+        // 視覺層的字串設定 ( 見上方 translator 與 index.html )。給 agent 的 snapshot 報告是固定的英文欄位, 不受影響
+        this.i18nOpt = {strings: d.strings || null, lang: d.lang || null, t: opt.t || (opt.i18n && opt.i18n.t) || null};
       },
       interface: function() {
         var self = this;
@@ -639,8 +685,8 @@
             return self.itf;
           },
           current: function() { return self.current; },
-          lang: function() { return self.lang; },
-          strings: function() { return self.strings; },
+          // 視覺層用: translator(自己的內建資源) -> tr(key, params), 順序 data.strings > data.lang > block i18n
+          translator: function(res) { return translator(res, self.i18nOpt); },
           list: function() { return Promise.resolve().then(function() { return self.list() || []; }); },
           render: function(name, el) {
             self.el = el;
