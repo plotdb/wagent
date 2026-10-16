@@ -17,6 +17,11 @@
   </style>
   <!-- sandbox 預設視覺層: extend sandbox-base。用戶可 extend sandbox-base 自訂視覺。 -->
   <script type="@plotdb/block">
+    // 介面字串 ( data.lang 選語言, data.strings 個別覆寫; 見 base.html )
+    var TEXT = {
+      zh: {choose: '— 選擇 block —', refresh: '重新渲染', empty: '尚無內容 — 用對話建立 block,或從上方選單選擇', failed: '渲染失敗: '},
+      en: {choose: '— choose a block —', refresh: 'Re-render', empty: 'Nothing here yet — create a block in the chat, or pick one from the menu above', failed: 'Render failed: '}
+    };
     module.exports = {
       pkg: {
         name: 'sandbox',
@@ -32,13 +37,21 @@
         var select = root.querySelector('select');
         var refreshBtn = root.querySelector('button');
         var stage = root.querySelector('.rc-sandbox-stage');
+        var over = base.strings ? (base.strings() || {}) : {};
+        var table = TEXT[base.lang ? base.lang() : 'zh'] || TEXT.zh;
+        function t(key) { return key in over ? over[key] : (table[key] !== undefined ? table[key] : TEXT.zh[key]); }
+        function esc(v) { return String(v).replace(/[&<>"]/g, function(c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+        // 靜態的 html 字串 ( 模板裡的是 zh, 照語言換掉 )
+        refreshBtn.title = t('refresh');
+        var empty = stage.querySelector('.rc-sandbox-empty');
+        if(empty) { empty.textContent = t('empty'); }
 
         function reloadList() {
           return base.list().then(function(list) {
             // 應用層沒提供清單 (例如只編輯單一 block) 就不顯示切換選單
             select.style.display = list.length ? '' : 'none';
             var cur = base.current();
-            select.innerHTML = '<option value="">— 選擇 block —</option>' +
+            select.innerHTML = '<option value="">' + esc(t('choose')) + '</option>' +
               list.map(function(b) {
                 return '<option value="' + b.name + '"' + (b.name === cur ? ' selected' : '') + '>' +
                   b.name + '</option>';
@@ -52,7 +65,7 @@
           el.style.minHeight = '400px';
           stage.appendChild(el);
           base.render(name, el).catch(function(e) {
-            stage.innerHTML = '<div class="rc-sandbox-empty">渲染失敗: ' + e.message + '</div>';
+            stage.innerHTML = '<div class="rc-sandbox-empty">' + esc(t('failed')) + e.message + '</div>';
             console.error(e);
           });
           reloadList();

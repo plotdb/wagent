@@ -1,5 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated, retainable, interruptedNote} from '../turn-context.js';
+import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated, retainable, interruptedNote, strings} from '../turn-context.js';
 import {ID, make as lderr} from '../lderr.js';
 import {createProgress} from '../progress.js';
 
@@ -27,10 +27,11 @@ export function thinkingFor(model) {
 // 由應用層決定 (createRuntime -> worker -> 這裡); 預設值是估的, 不是量的 —
 // 要調到對得先有 proxy 那邊的用量記錄。
 // maxImages: 歷史裡最多留幾張圖, 見 turn-context.js 的〈圖的上限〉。
+// lang: 執行環境附給模型的說明 ( context / 步數上限 / 截斷 / 中斷 ) 用哪個語言, 見 turn-context.js 的〈語言〉。
 //
 // 歷史是 append-only: 送出過的訊息一律不改 (prompt cache 與 preserved thinking
 // 都綁著前綴)。唯一的例外是圖超過上限時的一次性重建 (compactHistory)。
-export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, maxImages, history: seed}) {
+export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, maxImages, lang, history: seed}) {
   const url = (api || '/api/agent') + '/llm/anthropic';
   // 連續截斷幾次就放棄。跟 chat 的 maxOffer 是同一類東西: 重試要有上限,
   // 否則「每次都截斷」會變成另一種跑不完的迴圈。
@@ -161,7 +162,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
   function send(text, cb) {
     const startLen = history.length;
     // 本輪的狀況描述接在後面; 舊的不動 (「以最新一份為準」寫在文字裡, 見 wrapContext)
-    history.push({role: 'user', content: userContent(text, cb && cb.context)});
+    history.push({role: 'user', content: userContent(text, cb && cb.context, lang)});
     const events = [];
 
     function runBlocks(blocks, bad, i, results) {
@@ -201,7 +202,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
 
     const step = function() {
       // hard limit: 不再呼叫模型。events 照常回傳 — 使用者要看得到做過什麼。
-      if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax), events: events, limited: true}); }
+      if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax, lang), events: events, limited: true}); }
       steps++;
       // 圖超過上限: 一次性重建 (只在 tool_result 已接上之後, 不會切在 tool 回合中間)
       if(countImages(history) > imageMax) {
@@ -219,15 +220,15 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
           truncated++;
           if(truncated > MAX_TRUNCATED) {
             throw lderr(ID.TRUNCATED,
-              '模型回應連續 ' + MAX_TRUNCATED + ' 次超過長度上限被截斷, 已停止。');
+              strings(lang).truncatedStop(MAX_TRUNCATED));
           }
           var texts = response.content.filter(function(b) { return b.type === 'text'; });
           // 空的 assistant 訊息不合法, 而 user 訊息也不能直接接在 user 之後
           history.push({
             role: 'assistant',
-            content: texts.length ? texts : [{type: 'text', text: '(回覆被截斷)'}]
+            content: texts.length ? texts : [{type: 'text', text: strings(lang).truncatedReply}]
           });
-          history.push({role: 'user', content: [{type: 'text', text: wrapTruncated()}]});
+          history.push({role: 'user', content: [{type: 'text', text: wrapTruncated(lang)}]});
           return step();
         }
         history.push({role: 'assistant', content: response.content});
@@ -236,11 +237,11 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
             // 使用者執行中插的話: 只能接在 tool_result 之後 — 這則 user message
             // 已經含齊本輪所有 tool_result, 配對是完整的, 補一段 text 安全。
             const extra = cb && cb.nudge ? cb.nudge() : null;
-            if(extra && extra.length) { results.push({type: 'text', text: wrapNudge(extra)}); }
+            if(extra && extra.length) { results.push({type: 'text', text: wrapNudge(extra, lang)}); }
             // soft limit 只提醒一次 —— 每輪都附一遍是在燒 token 叫模型省 token
             if(steps >= softMax && !warned) {
               warned = true;
-              results.push({type: 'text', text: wrapLimit(steps, hardMax)});
+              results.push({type: 'text', text: wrapLimit(steps, hardMax, lang)});
             }
             history.push({role: 'user', content: results});
             return step();
@@ -262,7 +263,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
       const last = history[history.length - 1];
       if(last && last.role === 'assistant' && Array.isArray(last.content) &&
         last.content.some(function(b) { return b.type === 'tool_use'; })) { history.pop(); }
-      history.push({role: 'assistant', content: [{type: 'text', text: interruptedNote(e)}]});
+      history.push({role: 'assistant', content: [{type: 'text', text: interruptedNote(e, lang)}]});
       e.retained = true;
       throw e;
     });

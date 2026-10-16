@@ -40,6 +40,9 @@ const maxImages = parseInt(params.get('maxImages'), 10) || 0;
 let apiHeaders = {};
 try { apiHeaders = JSON.parse(params.get('headers') || '{}') || {}; } catch(e) { apiHeaders = {}; }
 const getHeaders = function() { return apiHeaders; };
+// 給模型看的執行環境說明 ( turn-context.js / compact.js ) 用哪個語言。createRuntime({lang}) 明講的優先,
+// 否則跟著掛載點 ( /prompt 回報的 lang ), 都沒有就是 zh
+const langParam = params.get('lang') || '';
 
 
 const esh = await import(eshUrl);
@@ -94,7 +97,7 @@ try {
   persist = (mounts['/home'] && mounts['/home'].backend) || 'mounted';
 } catch(e) {
   sh = await esh.createShell();
-  persist = `in-memory (掛載失敗: ${e.message})`;
+  persist = langParam === 'en' ? `in-memory (mount failed: ${e.message})` : `in-memory (掛載失敗: ${e.message})`;
 }
 
 // workspace 的初始內容由**應用層**植入 (見 sample/dataviz/seed.js):
@@ -286,7 +289,7 @@ function maybeCompact(key) {
       body: JSON.stringify(body)
     }).then(checkResponse).then(function(r) { return r.json(); });
   };
-  return compactHistoryTo(e.s.getHistory(), e.s.format, Object.assign({}, compactOpt, {call: call}))
+  return compactHistoryTo(e.s.getHistory(), e.s.format, Object.assign({}, compactOpt, {call: call, lang: e.lang}))
     .then(function(h) {
       if(!h) { return; }
       e.s.setHistory(h);
@@ -306,6 +309,7 @@ function getSession(key, block) {
       .then(function(r) { return r.json(); })
   ]).then(function(r) {
     const pick = currentModel(r[0]);
+    const lang = langParam || r[1].lang || 'zh';
     // brief 是靜態的, 放 system prompt (快取前綴); 每輪會變的走 turnContext 附在尾端
     const system = hostBrief ? `${r[1].system}\n\n${hostBrief}` : r[1].system;
     const run = makeRunTool(shAgent, {
@@ -339,7 +343,7 @@ function getSession(key, block) {
       return (CREATE[provider] || createOpenAI)({
         system: system, tools: tools, runTool: runTool,
         api: api, model: model, headers: getHeaders,
-        maxSteps: maxSteps, softSteps: softSteps, maxImages: maxImages, history: history
+        maxSteps: maxSteps, softSteps: softSteps, maxImages: maxImages, lang: lang, history: history
       });
     };
     // 匯入的紀錄 ( 見上方〈對話的保存與壓縮〉 ): 當作起始歷史, provider 不同先轉換
@@ -349,7 +353,7 @@ function getSession(key, block) {
       seed = d.format === pick.provider ? d.history : convert(d.history, d.format, pick.provider);
       delete imported[key];
     }
-    sessions[key] = {provider: pick.provider, s: make(pick.provider, pick.model, seed), make: make};
+    sessions[key] = {provider: pick.provider, s: make(pick.provider, pick.model, seed), make: make, lang: lang};
     return sessions[key].s;
   });
 }

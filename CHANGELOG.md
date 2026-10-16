@@ -1,5 +1,22 @@
 # Change Logs
 
+## v0.8.0
+
+ - features:
+   - 語言選項:掛載點 `wagent({lang: 'en'})` 讓整套跑英文;預設 `zh`,行為與 0.7 一字不差
+     - 後端:system prompt ( block / plain 兩種 preset ) 與 proxy 回給前端的額度錯誤訊息;
+       `lang` 打錯在掛載時就丟錯 ( 同 `preset` );`GET <mount>/provider` 與 `/prompt` 回報 `lang`
+     - runtime:`createRuntime({lang})` 選用,不給就問掛載點;給模型看的執行環境說明 ( 每輪 context、
+       步數上限、截斷、中斷說明、壓縮摘要的開頭 ) 跟著它;`rt.lang` / `rt.transport.lang`
+     - chat block:`data.lang` ( 預設跟著 runtime,再來是 zh ) 與 `data.strings` 個別覆寫字串 ( 字串或函式 );
+       自動修正送給 agent 的訊息、info 訊息也跟著語言。視覺層用 `base.lang()` / `base.strings()`
+     - sandbox block:預設外觀的 `data.lang` / `data.strings`
+ - tweaks:
+   - `prompt.compose(purpose, block, preset, lang)`、`prompt.lang(name)`;英文版另外匯出 `PRESETS_EN` 等
+   - turn-context.js 的各函式多一個 `lang` 參數 ( 最後一個 ),compact 的 opt 多 `lang`
+   - `test/lang.mjs`:en 的 prompt / 執行環境說明沒有中文、預設等於 zh、打錯字在掛載時丟錯
+
+
 ## v0.7.0
 
  - features:

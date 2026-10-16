@@ -58,6 +58,9 @@
         this.lastError = null;
         this.sigs = {};         // 各 snapshot 情境的上次簽名, 用來算差異量
         this.handlers = {};
+        // 視覺層的語言與字串覆寫 ( 見 index.html )。給 agent 的 snapshot 報告是固定的英文欄位, 不受影響
+        this.lang = d.lang || 'zh';
+        this.strings = d.strings || {};
       },
       interface: function() {
         var self = this;
@@ -636,6 +639,8 @@
             return self.itf;
           },
           current: function() { return self.current; },
+          lang: function() { return self.lang; },
+          strings: function() { return self.strings; },
           list: function() { return Promise.resolve().then(function() { return self.list() || []; }); },
           render: function(name, el) {
             self.el = el;

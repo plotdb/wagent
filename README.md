@@ -27,7 +27,8 @@ Backend - mount the router wherever you like:
 
     app.use('/api/agent', require('@plotdb/wagent')({preset: 'plain', purpose: '...'}));
 
-options: `purpose` ( domain prompt ), `preset` ( `block` default / `plain` ), `log`,
+options: `purpose` ( domain prompt ), `preset` ( `block` default / `plain` ), `lang` ( `zh` default / `en`,
+see Language below ), `log`,
 `provider`, `model`, `models`, `rate`, `usage`, `budget`, `tune` - see `api/index.js`.
 LLM keys come from env: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Which model to use is
 per mount ( below ); `LLM_PROVIDER`, `ANTHROPIC_MODEL`, `OPENAI_MODEL` are the fallback.
@@ -51,6 +52,31 @@ only uses the runtime ( no chat / sandbox block ) needs none of them. `marked` +
 `dompurify` ( markdown in chat messages, see below ) are loaded by the page and are not
 peer dependencies: the backend that installs wagent often pins its own `marked` for
 unrelated build tools, and a peer range would only make that install fail.
+
+## Language
+
+Everything the end user or the model sees can be in Chinese ( `zh`, the default — unchanged
+from 0.7 ) or English ( `en` ). Set it once on the mount; the frontend follows it:
+
+    app.use('/api/agent', require('@plotdb/wagent')({lang: 'en', purpose: '...'}));
+
+ - backend: the system prompt ( both presets ) and the quota errors the proxy returns. An unknown
+   value throws at mount time, like `preset`. `purpose` is yours and is passed through as is —
+   write it in the language you want. `GET <mount>/provider` and `GET <mount>/prompt` report `lang`.
+ - runtime: `createRuntime({lang})` is optional; without it the runtime asks the mount
+   ( `GET <mount>/provider` ) and falls back to `zh`. It sets the language of the notes the runtime
+   adds for the model ( per-turn context, step limit, truncation, interruption, the compaction
+   summary header ) and is exposed as `rt.lang` / `rt.transport.lang`. The system prompt always
+   comes from the mount.
+ - chat block: `data.lang` ( default: the runtime's language via `data.transport` / `data.models`,
+   else `zh` ) for its UI and for the auto-fix message it sends the agent. `data.strings` overrides
+   single strings by key — a string, or a function for the keys that take arguments
+   ( e.g. `{send: 'Go', greetEdit: function(name) { return 'Editing ' + name; }}` ). Keys are those in
+   the `TEXT` tables of `client/block/chat/index.html` ( UI ) and `base.html` ( messages ).
+   A derived view reads them through `base.lang()` / `base.strings()`.
+ - sandbox block: same `data.lang` / `data.strings` for its default view ( `client/block/sandbox/index.html` );
+   it has no runtime to follow, so pass `lang` explicitly. The snapshot report the agent reads is English
+   either way.
 
 ## Chat message formatting
 
@@ -126,7 +152,8 @@ defaults ( same fields as 0.3.0 ); `providers` lists only those with a key:
 
     {provider: 'anthropic', model: 'claude-opus-5-5',
      providers: {anthropic: {model: 'claude-opus-5-5', models: ['claude-opus-5-5', ...]},
-                 openai:    {model: 'gpt-5', models: [...]}}}
+                 openai:    {model: 'gpt-5', models: [...]}},
+     lang: 'zh'}                                // the mount's language ( 0.8.0 )
 
 Switching in the middle of a conversation, from the runtime:
 

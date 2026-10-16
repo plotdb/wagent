@@ -63,6 +63,77 @@
   <!-- chat 預設視覺層: extend chat-base, 以 parent interface 為基礎做 UI。
        用戶可仿此檔 extend chat-base 做自己的視覺。 -->
   <script type="@plotdb/block">
+    // 介面字串。語言與覆寫來自 base ( data.lang / data.strings, 見 base.html ); 帶參數的是函式
+    var TEXT = {
+      zh: {
+        autoFixTitle: '關掉的話, 渲染出錯時只會提議, 按了才送給 agent',
+        autoFixLabel: '出錯自動修',
+        modelTitle: '模型 ( 下一輪起生效, 對話不清 )',
+        placeholder: '輸入訊息,Enter 送出,Shift+Enter 換行',
+        send: '送出',
+        sendQueued: '排隊送出',
+        queuedTitle: '等 agent 做完手上的事就送進去',
+        thinking: '思考中…',
+        working: '執行中…',
+        noReply: '(無回覆)',
+        error: function(m) { return '錯誤: ' + m; },
+        verbs: {write_file: '寫入', edit_file: '編輯', read_file: '讀取', run_shell: '執行', snapshot: '截圖'},
+        phaseWaiting: '等待回應',
+        phaseThinking: '思考中',
+        phaseText: '回覆中',
+        phaseError: '呼叫失敗',
+        phaseBetween: '執行工具 / 準備下一步',
+        tokens: 'tokens',
+        turn: function(time, calls, out) { return '本輪 ' + time + ' · ' + calls + ' 次呼叫 · ↓ ≈' + out; },
+        fixLimit: '自動修正已達上限,仍然渲染失敗:\n',
+        fixFailed: '渲染失敗:\n',
+        fixButton: '請 agent 修正',
+        fixSent: '已送出',
+        fixSentNote: '已把錯誤送給 agent',
+        newTitle: '新增 block',
+        greetEdit: function(name) { return '正在編輯「' + name + '」。告訴我你要怎麼修改。'; },
+        greetNew: '描述你想要的 block,我會建立一個新的。例如:「用 sales 資料畫營收折線圖」。',
+        autoFixOn: '出錯時會自動請 agent 修',
+        autoFixOff: '出錯時只會提議,按了才送',
+        noKey: '未設定 API key (.env)',
+        modelNext: function(provider, model) { return '下一輪起使用 ' + provider + ' / ' + model; },
+        modelFailed: function(m) { return '換模型失敗: ' + m; }
+      },
+      en: {
+        autoFixTitle: 'When off, render errors are only offered as a fix; nothing is sent to the agent until you click',
+        autoFixLabel: 'Auto-fix errors',
+        modelTitle: 'Model ( applies from the next turn; the conversation is kept )',
+        placeholder: 'Type a message — Enter to send, Shift+Enter for a new line',
+        send: 'Send',
+        sendQueued: 'Queue',
+        queuedTitle: 'Will be sent once the agent finishes what it is doing',
+        thinking: 'Thinking…',
+        working: 'Working…',
+        noReply: '(no reply)',
+        error: function(m) { return 'Error: ' + m; },
+        verbs: {write_file: 'writing', edit_file: 'editing', read_file: 'reading', run_shell: 'running', snapshot: 'snapshot'},
+        phaseWaiting: 'waiting for response',
+        phaseThinking: 'thinking',
+        phaseText: 'replying',
+        phaseError: 'call failed',
+        phaseBetween: 'running tools / preparing next step',
+        tokens: 'tokens',
+        turn: function(time, calls, out) { return 'this turn ' + time + ' · ' + calls + (calls === 1 ? ' call' : ' calls') + ' · ↓ ≈' + out; },
+        fixLimit: 'Auto-fix reached its limit and rendering still fails:\n',
+        fixFailed: 'Rendering failed:\n',
+        fixButton: 'Ask the agent to fix it',
+        fixSent: 'Sent',
+        fixSentNote: 'Sent the error to the agent',
+        newTitle: 'New block',
+        greetEdit: function(name) { return 'Editing "' + name + '". Tell me what you would like to change.'; },
+        greetNew: 'Describe the block you want and I will create a new one. For example: "a line chart of revenue from the sales data".',
+        autoFixOn: 'The agent will be asked to fix errors automatically',
+        autoFixOff: 'Errors will only be offered as a fix; click to send',
+        noKey: 'No API key configured (.env)',
+        modelNext: function(provider, model) { return 'Using ' + provider + ' / ' + model + ' from the next turn'; },
+        modelFailed: function(m) { return 'Failed to switch model: ' + m; }
+      }
+    };
     module.exports = {
       pkg: {
         name: 'chat',
@@ -84,6 +155,21 @@
         var thinking = null;
         var statusEl = root.querySelector('.rc-chat-status');
         var queued = [];   // 已經收下、還沒送進 agent 的發話 (畫面上的節點)
+        // 字串: data.strings 的覆寫 > 這個語言的表 > zh 的表 ( base 沒有 lang() 的舊版就是 zh )
+        var lang = base.lang ? base.lang() : 'zh';
+        var over = base.strings ? (base.strings() || {}) : {};
+        var table = TEXT[lang] || TEXT.zh;
+        function t(key) {
+          var v = key in over ? over[key] : table[key];
+          if(v === undefined) { v = TEXT.zh[key]; }
+          return typeof v === 'function' ? v.apply(null, Array.prototype.slice.call(arguments, 1)) : v;
+        }
+        // 靜態的 html 字串 ( 寫在上方模板裡的是 zh, 照語言換掉 )
+        root.querySelector('.rc-chat-autofix').title = t('autoFixTitle');
+        root.querySelector('.rc-chat-autofix span').textContent = t('autoFixLabel');
+        modelEl.title = t('modelTitle');
+        input.placeholder = t('placeholder');
+        btn.textContent = t('send');
 
         function addMsg(cls, text) {
           var d = document.createElement('div');
@@ -98,7 +184,7 @@
         // 讓文字段落與 tool 之間的空檔也看得出還在做事
         function working() {
           if(!thinking) { return; }
-          thinking.textContent = '執行中…';
+          thinking.textContent = t('working');
           log.appendChild(thinking);
           log.scrollTop = log.scrollHeight;
         }
@@ -124,13 +210,13 @@
         });
         base.on('reply', function(text) {
           var d = live || addMsg('assistant md', '');
-          base.render(d, text || '(無回覆)', {final: true});
+          base.render(d, text || t('noReply'), {final: true});
           live = null;
           log.scrollTop = log.scrollHeight;
         });
         base.on('error', function(e) {
           live = null;
-          addMsg('error', '錯誤: ' + e.message);
+          addMsg('error', t('error', e.message));
         });
         base.on('info', function(t) { addMsg('event', t); });
         // 還原之前存的對話 ( base.restore ): 清掉畫面, 依紀錄重畫
@@ -141,7 +227,7 @@
             if(e.role === 'user') { addMsg('user', e.text || ''); }
             else if(e.role === 'assistant') { base.render(addMsg('assistant md', ''), e.text || '', {final: true}); }
             else if(e.role === 'tool') { addMsg('event', (e.error ? '✗ ' : '✓ ') + e.tool + (e.path ? ' ' + e.path : '')); }
-            else if(e.role === 'error') { addMsg('error', '錯誤: ' + (e.message || '')); }
+            else if(e.role === 'error') { addMsg('error', t('error', e.message || '')); }
             else if(e.role === 'info') { addMsg('event', e.text || ''); }
           });
           log.scrollTop = log.scrollHeight;
@@ -149,25 +235,25 @@
         base.on('block', function(name) { title.textContent = name; });
         // 執行中也能發話 (會排隊), 所以按鈕不 disable, 只換字提示會進 queue
         base.on('busy', function(b) {
-          btn.textContent = b ? '排隊送出' : '送出';
-          if(b) { thinking = addMsg('event', '思考中…'); }
+          btn.textContent = b ? t('sendQueued') : t('send');
+          if(b) { thinking = addMsg('event', t('thinking')); }
           else if(thinking) { thinking.remove(); thinking = null; }
         });
         // ── 狀態列: 顯示最近一份 progress, 每秒重畫經過時間 ──────────────
         var prog = null, ticker = null;
-        var VERB = {write_file: '寫入', edit_file: '編輯', read_file: '讀取', run_shell: '執行', snapshot: '截圖'};
+        var VERB = t('verbs') || {};
         function fmtK(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0); }
         function fmtT(ms) {
           var s = Math.max(0, Math.floor(ms / 1000));
           return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
         }
         function doing(p) {
-          if(p.phase === 'waiting') { return '等待回應'; }
-          if(p.phase === 'thinking') { return '思考中'; }
-          if(p.phase === 'text') { return '回覆中'; }
+          if(p.phase === 'waiting') { return t('phaseWaiting'); }
+          if(p.phase === 'thinking') { return t('phaseThinking'); }
+          if(p.phase === 'text') { return t('phaseText'); }
           if(p.phase === 'tool') { return (VERB[p.tool] || p.tool || 'tool') + (p.target ? ' ' + p.target : ''); }
-          if(p.phase === 'error') { return '呼叫失敗'; }
-          return '執行工具 / 準備下一步';
+          if(p.phase === 'error') { return t('phaseError'); }
+          return t('phaseBetween');
         }
         function drawStatus() {
           var p = prog;
@@ -179,10 +265,10 @@
             p.model || p.provider || '',
             doing(p),
             '↑ ' + (p.inEstimated ? '≈' : '') + fmtK(p.inTokens),
-            '↓ ' + out + ' tokens',
+            '↓ ' + out + ' ' + t('tokens'),
             fmtT((ended ? p.at : now) - p.startedAt)
           ];
-          if(p.turn) { parts.push('本輪 ' + fmtT(now - p.turn.startedAt) + ' · ' + p.turn.calls + ' 次呼叫 · ↓ ≈' + fmtK(p.turn.outTokens)); }
+          if(p.turn) { parts.push(t('turn', fmtT(now - p.turn.startedAt), p.turn.calls, fmtK(p.turn.outTokens))); }
           statusEl.className = 'rc-chat-status' + (p.phase === 'error' ? ' error' : '');
           statusEl.innerHTML = '';
           var dot = document.createElement('span');
@@ -206,7 +292,7 @@
         });
         base.on('queued', function(text) {
           var el = addMsg('user queued', text);
-          el.title = '等 agent 做完手上的事就送進去';
+          el.title = t('queuedTitle');
           queued.push(el);
           working();
         });
@@ -223,15 +309,13 @@
 
         // 出錯時的提議: 開關關著、或自動修正試到上限, 就給一顆按鈕
         base.on('fix-offer', function(o) {
-          var d = addMsg('offer', (o.reason === 'limit'
-            ? '自動修正已達上限,仍然渲染失敗:\n'
-            : '渲染失敗:\n') + o.message);
+          var d = addMsg('offer', (o.reason === 'limit' ? t('fixLimit') : t('fixFailed')) + o.message);
           var b = document.createElement('button');
-          b.textContent = '請 agent 修正';
+          b.textContent = t('fixButton');
           b.onclick = function() {
             b.disabled = true;
-            b.textContent = '已送出';
-            addMsg('event', '已把錯誤送給 agent');
+            b.textContent = t('fixSent');
+            addMsg('event', t('fixSentNote'));
             o.fix();
           };
           d.appendChild(b);
@@ -252,14 +336,12 @@
           if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
         });
 
-        title.textContent = base.block() || '新增 block';
-        addMsg('assistant', base.block()
-          ? '正在編輯「' + base.block() + '」。告訴我你要怎麼修改。'
-          : '描述你想要的 block,我會建立一個新的。例如:「用 sales 資料畫營收折線圖」。');
+        title.textContent = base.block() || t('newTitle');
+        addMsg('assistant', base.block() ? t('greetEdit', base.block()) : t('greetNew'));
         autoFixEl.checked = base.autoFix();
         autoFixEl.addEventListener('change', function() {
           base.autoFix(autoFixEl.checked);
-          addMsg('event', autoFixEl.checked ? '出錯時會自動請 agent 修' : '出錯時只會提議,按了才送');
+          addMsg('event', autoFixEl.checked ? t('autoFixOn') : t('autoFixOff'));
         });
         var models = base.models && base.models();
         if(models) {
@@ -267,7 +349,7 @@
           var pick = function(c) { if(c) { modelEl.value = c.provider + '/' + c.model; } };
           models.listModels().then(function(r) {
             var names = Object.keys(r.providers || {});
-            if(!names.length) { providerEl.textContent = '未設定 API key (.env)'; return; }
+            if(!names.length) { providerEl.textContent = t('noKey'); return; }
             names.forEach(function(name) {
               var g = document.createElement('optgroup');
               g.label = name;
@@ -285,16 +367,16 @@
           modelEl.addEventListener('change', function() {
             var v = modelEl.value.split('/');
             models.setModel({provider: v[0], model: v.slice(1).join('/')})
-              .then(function(c) { addMsg('event', '下一輪起使用 ' + c.provider + ' / ' + c.model); })
+              .then(function(c) { addMsg('event', t('modelNext', c.provider, c.model)); })
               .catch(function(e) {
-                addMsg('error', '換模型失敗: ' + ((e && e.message) || e));
+                addMsg('error', t('modelFailed', (e && e.message) || e));
                 models.getModel().then(pick);
               });
           });
           models.onModelChange(pick);
         } else {
           base.provider().then(function(j) {
-            providerEl.textContent = j.provider ? j.provider + ' / ' + j.model : '未設定 API key (.env)';
+            providerEl.textContent = j.provider ? j.provider + ' / ' + j.model : t('noKey');
           });
         }
         input.focus();

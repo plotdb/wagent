@@ -1,6 +1,26 @@
 <div>
   <!-- chat base 層: headless, 只有邏輯。視覺由 extend 此 block 的 derived 層實作。 -->
   <script type="@plotdb/block">
+    // 這一層會說出口的話 ( 給 agent 的自動修正訊息、info 事件 )。視覺層的字串在各自的檔案裡 ( 見 index.html )。
+    // data.lang 選語言, data.strings 個別覆寫 ( 值可以是字串, 或回傳字串的函式 —— 帶參數的那幾個會收到參數 )
+    var TEXT = {
+      zh: {
+        noTransport: 'chat: 缺少 transport — 用 createRuntime() 取得後傳進來',
+        compactFailed: function(err) { return '對話壓縮失敗 ( ' + err + ' ), 這一輪照常進行'; },
+        compacted: '對話太長, 已把較早的部分壓縮成摘要 ( 畫面上的紀錄不受影響 )',
+        fixRequest: function(name, message) { return '前端渲染 block「' + name + '」時發生錯誤:\n' + message + '\n請 read_file 檢查並修正這個 block。'; },
+        fixGaveUp: '渲染持續失敗且錯誤一直在變, 已停止提議 —— 請重新整理或自己看一下。',
+        fixTrying: function(n, max) { return '渲染錯誤,嘗試自動修正 (' + n + '/' + max + ')'; }
+      },
+      en: {
+        noTransport: 'chat: no transport — get one from createRuntime() and pass it in',
+        compactFailed: function(err) { return 'Failed to compact the conversation ( ' + err + ' ); this turn goes ahead as usual'; },
+        compacted: 'The conversation got long, so the earlier part was compacted into a summary ( the log on screen is unaffected )',
+        fixRequest: function(name, message) { return 'An error occurred while rendering block "' + name + '" in the frontend:\n' + message + '\nPlease read_file to inspect and fix this block.'; },
+        fixGaveUp: 'Rendering keeps failing and the error keeps changing, so no more fix offers — please reload or take a look yourself.',
+        fixTrying: function(n, max) { return 'Render error, trying to fix it automatically (' + n + '/' + max + ')'; }
+      }
+    };
     module.exports = {
       pkg: {
         name: 'chat-base',
@@ -16,6 +36,10 @@
         // d.transport: browser runtime 注入 ({send(text, cb), reset()})。必要 —
         // agent loop 在本機 worker 裡, chat 只是它的介面層。
         this.transport = d.transport || null;
+        // 語言: data.lang > runtime 的語言 ( createRuntime 會跟著掛載點 ) > zh。
+        // data.strings: 個別覆寫字串 ( 本層與視覺層共用同一份, 見 TEXT 與 index.html )
+        this.lang = d.lang || (d.transport && d.transport.lang) || (d.models && d.models.lang) || 'zh';
+        this.strings = d.strings || {};
         // d.models: 選用, 有 listModels / setModel / onModelChange 的物件 (通常就是 runtime)。
         // 給了, 畫面就能讓使用者在對話中換模型。
         this.models = d.models || null;
@@ -51,6 +75,12 @@
         if(this.itf) { return this.itf; }
         function emit(ev, data) {
           (self.handlers[ev] || []).forEach(function(fn) { fn(data); });
+        }
+        // 取字串: data.strings 的覆寫 > 這個語言的表 > zh 的表。函式就帶參數呼叫
+        function t(key) {
+          var v = key in self.strings ? self.strings[key] : ((TEXT[self.lang] || TEXT.zh)[key]);
+          if(v === undefined) { v = TEXT.zh[key]; }
+          return typeof v === 'function' ? v.apply(null, Array.prototype.slice.call(arguments, 1)) : v;
         }
         // chat 不決定畫面。「什麼時候該重畫」屬於 application —
         // 只有它知道現在畫的是什麼、編輯範圍到哪, 而且變更的來源不只 agent
@@ -202,6 +232,9 @@
             return self.itf;
           },
           block: function() { return self.blockName; },
+          // 語言與覆寫的字串 ( 視覺層用它們組自己的字串表, 見 index.html )
+          lang: function() { return self.lang; },
+          strings: function() { return self.strings; },
           // 訊息格式化 ( 說明見上方「訊息格式化」 )
           format: function(text) { return format(text); },
           render: function(el, text, o) {
@@ -252,7 +285,7 @@
             emit('busy', true);
             // agent loop 在本機 worker; transport 由 runtime 注入 (createRuntime().transport)
             if(!self.transport) {
-              return Promise.reject(new Error('chat: 缺少 transport — 用 createRuntime() 取得後傳進來'));
+              return Promise.reject(new Error(t('noTransport')));
             }
             return self.transport.send(text, {
                 block: self.blockName,
@@ -276,9 +309,9 @@
                 },
                 // 這一輪開始前把對話壓縮了 ( 見 runtime/compact.js ): 只影響送給模型的那份
                 onCompact: function(c) {
-                  var t = c && c.error ? '對話壓縮失敗 ( ' + c.error + ' ), 這一輪照常進行' : '對話太長, 已把較早的部分壓縮成摘要 ( 畫面上的紀錄不受影響 )';
-                  record({role: 'info', text: t, key: c && c.error ? 'compact-failed' : 'compacted'});
-                  emit('info', t);
+                  var m = c && c.error ? t('compactFailed', c.error) : t('compacted');
+                  record({role: 'info', text: m, key: c && c.error ? 'compact-failed' : 'compacted'});
+                  emit('info', m);
                 },
                 // 排隊的訊息真的送進去了 — 讓畫面把「排隊中」改掉
                 onNudge: function(texts) { emit('nudge-taken', texts); },
@@ -328,11 +361,7 @@
             var fix = function() {
               self.fixCount++;
               self.offered = null;   // 送出去了, 之後再壞就是新的一件事
-              return self.itf.send(
-                '前端渲染 block「' + o.name + '」時發生錯誤:\n' + o.message +
-                '\n請 read_file 檢查並修正這個 block。',
-                {auto: true}
-              ).catch(function() {});
+              return self.itf.send(t('fixRequest', o.name, o.message), {auto: true}).catch(function() {});
             };
             // 提議而不是逕自去修: 開關關著, 或自動修正已經試到上限。
             // 兩種情況都給使用者同一個出口 — 一顆按鈕, 按了才送。
@@ -344,7 +373,7 @@
                 // 反而看不到最早的那一個 —— 停在這裡, 說一聲就好。
                 if(self.offers === self.maxOffer) {
                   self.offers++;
-                  var t1 = '渲染持續失敗且錯誤一直在變, 已停止提議 —— 請重新整理或自己看一下。';
+                  var t1 = t('fixGaveUp');
                   record({role: 'info', text: t1});
                   emit('info', t1);
                 }
@@ -360,7 +389,7 @@
               });
               return;
             }
-            var t2 = '渲染錯誤,嘗試自動修正 (' + (self.fixCount + 1) + '/' + self.maxFix + ')';
+            var t2 = t('fixTrying', self.fixCount + 1, self.maxFix);
             record({role: 'info', text: t2});
             emit('info', t2);
             fix();

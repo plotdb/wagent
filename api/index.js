@@ -15,6 +15,8 @@ const proxy = require('./proxy');
 //                不給就是一個純粹的 block 編輯環境)
 // opt.preset:    應用的形狀, 'block' (預設) 或 'plain' (不編輯 block 的應用)。
 //                決定 system prompt 的基底與 snapshot tool 的樣子, 見 api/prompt.js
+// opt.lang:      'zh' (預設) 或 'en'。system prompt、proxy 回給前端的錯誤訊息用哪個語言;
+//                /prompt 與 /provider 會回報它, 前端 (runtime / chat block) 沒指定就跟著它
 // opt.log:       logger function(tag, msg)
 // opt.provider:  預設 provider ('anthropic' / 'openai'); 不給就看 env LLM_PROVIDER
 // opt.model:     預設 model, 字串或 {anthropic, openai}; 不給就看 env ANTHROPIC_MODEL / OPENAI_MODEL
@@ -31,6 +33,7 @@ module.exports = function(opt) {
   const log = opt.log || function() {};
   const purpose = opt.purpose || '';
   const preset = prompt.preset(opt.preset);
+  const lang = prompt.lang(opt.lang);
   // 模型設定只在掛載點決定一次, proxy 的白名單與 /provider 的回報共用它
   const models = proxy.config(opt);
   const router = express.Router();
@@ -41,18 +44,19 @@ module.exports = function(opt) {
 
   // browser 端 agent loop 用的 llm proxy — 後端唯一暴露的能力面
   router.post('/llm/:provider', proxy({
-    log: log, config: models, rate: opt.rate,
+    log: log, config: models, rate: opt.rate, lang: lang,
     usage: opt.usage, budget: opt.budget, tune: opt.tune
   }));
 
-  // {provider, model, providers: {<name>: {model, models}}} — 前端的模型選單由此而來
-  router.get('/provider', (req, res) => { res.json(models.info()); });
+  // {provider, model, providers: {<name>: {model, models}}, lang} — 前端的模型選單由此而來;
+  // lang 讓前端不必另外設定就跟著掛載點的語言
+  router.get('/provider', (req, res) => { res.json(Object.assign({}, models.info(), {lang: lang})); });
 
   // system prompt 只留一份, 在後端 (前端改不動, 也不必重複維護)。
   // preset 一併回傳: worker 依它挑 snapshot tool 的定義 —— tool 定義在前端,
-  // 但「這是哪一種應用」只在這裡決定一次, 兩邊才不會各說各話。
+  // 但「這是哪一種應用」只在這裡決定一次, 兩邊才不會各說各話。lang 同理 ( worker 給模型看的執行環境說明跟著它 )
   router.get('/prompt', (req, res) => {
-    res.json({system: prompt.compose(purpose, req.query.block || null, preset), preset: preset});
+    res.json({system: prompt.compose(purpose, req.query.block || null, preset, lang), preset: preset, lang: lang});
   });
 
   return router;
