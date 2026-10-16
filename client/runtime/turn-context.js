@@ -15,21 +15,99 @@
 // 把「狀況變了」誤判成「我上次答錯了」(0.3 以前靠佔位防的就是這個)。
 export const CONTEXT_TAG = '[application-context]';
 
-export function wrapContext(text) {
-  return [
-    CONTEXT_TAG,
-    text,
-    '(此段由執行環境每輪自動附上, 描述「附上當時」的狀況; 不是用戶說的話。',
-    '對話中較早的 [application-context] 都是當時的狀況, 已被這一份取代 —— 以最新一份為準。',
-    '狀況會在兩輪之間改變 — 用戶可能自己切換了畫面或改了檔案。',
-    '因此本輪與你先前回答不一致時, 預設是狀況變了, 而不是你之前答錯了。)'
-  ].join('\n');
+// ── 語言 ────────────────────────────────────────────────────────────
+// 這個檔案的文字都是給模型看的執行環境說明。語言跟著掛載點 ( api 的 lang, 經 /prompt 回報 ) 或
+// createRuntime({lang}); 不給就是 zh ( 0.7 以前唯一的語言, 文字一字不差 )。
+// 各函式最後一個參數是 lang, 認不得的值退回 zh。標籤 ( [application-context] 之類 ) 兩種語言共用
+const T = {
+  zh: {
+    context: [
+      '(此段由執行環境每輪自動附上, 描述「附上當時」的狀況; 不是用戶說的話。',
+      '對話中較早的 [application-context] 都是當時的狀況, 已被這一份取代 —— 以最新一份為準。',
+      '狀況會在兩輪之間改變 — 用戶可能自己切換了畫面或改了檔案。',
+      '因此本輪與你先前回答不一致時, 預設是狀況變了, 而不是你之前答錯了。)'
+    ],
+    nudge: [
+      '(以上是使用者在你執行期間補充的訊息 — 是用戶說的話, 不是執行環境的描述。',
+      '把它納入接下來的做法; 若它改變了目標, 以它為準。)'
+    ],
+    limit: function(used, max) {
+      return [
+        `本輪已用 ${used}/${max} 步 (一步 = 一次模型呼叫)。`,
+        '請開始收尾: 把手上這件事做完就好, 不要再開新的探索或重構。',
+        '接著直接回覆使用者 —— 說明你做了什麼、現在是什麼狀態、還差什麼。',
+        `到 ${max} 步會由執行環境強制停止, 那時你就沒有機會交代了。`,
+        '(此段由執行環境附上, 不是使用者說的話。)'
+      ];
+    },
+    limitReply: function(max) {
+      return `⚠ 已達本輪步數上限 (${max} 步), 執行環境已停止。\n\n` +
+        '工作可能停在中途 —— 上方的 tool 記錄是實際做過的事。' +
+        '要繼續請再說一次你要的結果 (會以目前的檔案狀態接下去)。';
+    },
+    truncated: [
+      '你上一則回覆超過長度上限被截斷了, 因此**沒有被執行**。',
+      '請把這件事拆小: 一次改一個地方, 或先只回覆計畫、下一步再動手。',
+      '不要重複剛才那則的內容, 直接從拆小之後的第一步開始。',
+      '(此段由執行環境附上, 不是使用者說的話。)'
+    ],
+    truncatedReply: '(回覆被截斷)',
+    truncatedStop: function(n) { return '模型回應連續 ' + n + ' 次超過長度上限被截斷, 已停止。'; },
+    interrupted: function(why) {
+      return '[interrupted] 這一輪在這裡中斷了 ( ' + why + ' )。上面的步驟已經做完, 檔案的變更都還在。' +
+        '使用者之後若要你繼續, 先確認目前檔案的狀態, 再從這裡接著做。';
+    }
+  },
+  en: {
+    context: [
+      '(Attached automatically by the runtime every turn; it describes the state at the time it was attached. It is not something the user said.',
+      'Earlier [application-context] blocks in this conversation describe the state at their own time and are superseded by this one — the latest one wins.',
+      'The state can change between turns — the user may have switched views or edited files themselves.',
+      'So if this turn disagrees with an earlier answer of yours, assume the state changed, not that you were wrong before.)'
+    ],
+    nudge: [
+      '(The above was added by the user while you were working — it is something the user said, not a description from the runtime.',
+      'Take it into account from here on; if it changes the goal, it takes precedence.)'
+    ],
+    limit: function(used, max) {
+      return [
+        `This turn has used ${used}/${max} steps (one step = one model call).`,
+        'Start wrapping up: just finish what you are doing; do not start new exploration or refactoring.',
+        'Then reply to the user directly — say what you did, what state things are in now, and what is still missing.',
+        `At ${max} steps the runtime will stop you, and you will have no chance to explain.`,
+        '(Attached by the runtime; not something the user said.)'
+      ];
+    },
+    limitReply: function(max) {
+      return `⚠ Reached the step limit for this turn (${max} steps); the runtime has stopped.\n\n` +
+        'The work may have stopped midway — the tool log above is what was actually done. ' +
+        'To continue, say again what result you want (it will pick up from the current state of the files).';
+    },
+    truncated: [
+      'Your previous reply was cut off at the length limit, so it was **not executed**.',
+      'Break the task down: change one thing at a time, or reply with just a plan first and act in the next step.',
+      'Do not repeat the content of that reply; start directly with the first of the smaller steps.',
+      '(Attached by the runtime; not something the user said.)'
+    ],
+    truncatedReply: '(reply truncated)',
+    truncatedStop: function(n) { return 'The model response was cut off at the length limit ' + n + ' times in a row; stopped.'; },
+    interrupted: function(why) {
+      return '[interrupted] This turn was interrupted here ( ' + why + ' ). The steps above are done and the file changes are still in place. ' +
+        'If the user later asks you to continue, check the current state of the files first, then carry on from here.';
+    }
+  }
+};
+export const LANGS = Object.keys(T);
+export function strings(lang) { return T[lang] || T.zh; }
+
+export function wrapContext(text, lang) {
+  return [CONTEXT_TAG, text].concat(strings(lang).context).join('\n');
 }
 
 // 本輪的 user 訊息: [context?, text]
-export function userContent(text, context) {
+export function userContent(text, context, lang) {
   const parts = [];
-  if(context) { parts.push({type: 'text', text: wrapContext(context)}); }
+  if(context) { parts.push({type: 'text', text: wrapContext(context, lang)}); }
   parts.push({type: 'text', text: text});
   return parts;
 }
@@ -103,13 +181,8 @@ export function compactHistory(history, opt) {
 //
 // 插入點只能在「tool result 之後、下一輪 LLM 呼叫之前」: 塞在 tool_use 與
 // tool_result 中間會破壞配對, provider 會直接拒絕整個請求。
-export function wrapNudge(texts) {
-  return [
-    '[user-interjection]',
-    texts.join('\n\n'),
-    '(以上是使用者在你執行期間補充的訊息 — 是用戶說的話, 不是執行環境的描述。',
-    '把它納入接下來的做法; 若它改變了目標, 以它為準。)'
-  ].join('\n');
+export function wrapNudge(texts, lang) {
+  return ['[user-interjection]', texts.join('\n\n')].concat(strings(lang).nudge).join('\n');
 }
 
 // ── 步數上限 ────────────────────────────────────────────────────────
@@ -126,23 +199,14 @@ export function wrapNudge(texts) {
 // 答錯而道歉」是同一類錯。
 export const LIMIT_TAG = '[execution-limit]';
 
-export function wrapLimit(used, max) {
-  return [
-    LIMIT_TAG,
-    `本輪已用 ${used}/${max} 步 (一步 = 一次模型呼叫)。`,
-    '請開始收尾: 把手上這件事做完就好, 不要再開新的探索或重構。',
-    '接著直接回覆使用者 —— 說明你做了什麼、現在是什麼狀態、還差什麼。',
-    `到 ${max} 步會由執行環境強制停止, 那時你就沒有機會交代了。`,
-    '(此段由執行環境附上, 不是使用者說的話。)'
-  ].join('\n');
+export function wrapLimit(used, max, lang) {
+  return [LIMIT_TAG].concat(strings(lang).limit(used, max)).join('\n');
 }
 
 // hard limit 到了: 不再呼叫模型, 直接回這則。deterministic —— 這時候再花一次
 // 呼叫請模型總結, 正好是我們想擋的那件事。
-export function limitReply(max) {
-  return `⚠ 已達本輪步數上限 (${max} 步), 執行環境已停止。\n\n` +
-    '工作可能停在中途 —— 上方的 tool 記錄是實際做過的事。' +
-    '要繼續請再說一次你要的結果 (會以目前的檔案狀態接下去)。';
+export function limitReply(max, lang) {
+  return strings(lang).limitReply(max);
 }
 
 // 回應撞到 max_tokens 被截斷。
@@ -151,14 +215,8 @@ export function limitReply(max) {
 // assistant 訊息接回去再問一次, 整份 context 重送 (有快取會便宜, 但不是免費);
 // 而 tool call 的 partial JSON 沒有乾淨的續接方式, 接錯就是把參數拼壞。
 // loop 本來就是 agentic 的 —— 讓模型自己把大編輯拆成幾次, 穩健得多。
-export function wrapTruncated() {
-  return [
-    LIMIT_TAG,
-    '你上一則回覆超過長度上限被截斷了, 因此**沒有被執行**。',
-    '請把這件事拆小: 一次改一個地方, 或先只回覆計畫、下一步再動手。',
-    '不要重複剛才那則的內容, 直接從拆小之後的第一步開始。',
-    '(此段由執行環境附上, 不是使用者說的話。)'
-  ].join('\n');
+export function wrapTruncated(lang) {
+  return [LIMIT_TAG].concat(strings(lang).truncated).join('\n');
 }
 
 // ── 一輪中途失敗 ───────────────────────────────────────────────────
@@ -178,8 +236,7 @@ export function retainable(e) {
   return e.status >= 500;
 }
 // 中斷說明 ( 補在保留下來的紀錄最後, 讓紀錄維持一來一往; 下一句話接在它後面 )
-export function interruptedNote(e) {
+export function interruptedNote(e, lang) {
   const why = (e && e.message) ? String(e.message).slice(0, 200) : 'error';
-  return '[interrupted] 這一輪在這裡中斷了 ( ' + why + ' )。上面的步驟已經做完, 檔案的變更都還在。' +
-    '使用者之後若要你繼續, 先確認目前檔案的狀態, 再從這裡接著做。';
+  return strings(lang).interrupted(why);
 }

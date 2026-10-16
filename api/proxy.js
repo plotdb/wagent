@@ -38,6 +38,12 @@ const PROVIDERS = {
   }
 };
 
+// 回給前端、畫面上看得到的訊息 ( 依掛載點的 lang )
+const MSG = {
+  zh: {quota: '額度不足以完成這次請求', quotaStop: '額度用完, 這次回應在中途被停止'},
+  en: {quota: 'Not enough quota to complete this request', quotaStop: 'Quota used up; this response was stopped midway'}
+};
+
 // 極簡 sliding window rate limit (per ip)
 function makeLimiter(opt) {
   const max = opt.max || 60;
@@ -59,6 +65,7 @@ function makeLimiter(opt) {
 //             帳戶與額度是應用層的領域知識, wagent 不知道也不該替它決定)。
 //             record: {provider, model, stream, status, billable, bytes, usage, cost, ms, req}
 // opt.tune:   覆寫各類 token 的權重 (見 meter.js)
+// opt.lang:   'zh' (預設) / 'en' —— 額度錯誤的 message 用哪個語言 ( 前端以 id 分辨, message 是給人看的 )
 // opt.budget: function(req) -> 這次呼叫最多能花多少 (billable 單位), 或 null/
 //             Infinity 表示不限。**串流中途累積超過就中止上游** —— 額度是應用
 //             層的知識, wagent 只負責守。不給就不守 (行為與先前一字不差)。
@@ -69,6 +76,7 @@ module.exports = function(opt) {
   const onUsage = typeof opt.usage === 'function' ? opt.usage : null;
   const budgetOf = typeof opt.budget === 'function' ? opt.budget : null;
   const cfg = opt.config || config(opt);
+  const msg = MSG[opt.lang] || MSG.zh;
 
   return function(req, res) {
     const name = req.params.provider;
@@ -109,7 +117,7 @@ module.exports = function(opt) {
         // input 本身就超過 —— 連送都不用送。這是唯一還能用 HTTP status 的時機:
         // 一旦開始 pipe, status 就定下來了 (見下面 abort 的註解)。
         return res.status(lderr.HTTP).json(lderr.body(lderr.ID.QUOTA,
-          '額度不足以完成這次請求', {need: meter.result().billable, budget: budget}));
+          msg.quota, {need: meter.result().billable, budget: budget}));
       }
     }
     const t0 = Date.now();
@@ -175,7 +183,7 @@ module.exports = function(opt) {
           try { ac.abort(); } catch(e) { /* 已經結束了 */ }
           try { stream.destroy(); } catch(e) { /* 同上 */ }
           try {
-            if(sse && !res.writableEnded) { res.write(errorEvent(used, budget)); }
+            if(sse && !res.writableEnded) { res.write(errorEvent(used, budget, msg)); }
           } catch(e) { /* 對面已經走了 */ }
           report(0);
           try { if(!res.writableEnded) { res.end(); } } catch(e) { /* 同上 */ }
@@ -237,10 +245,10 @@ function tee(stream, meter, contentType, budget, over) {
 // 用 anthropic 的 error 事件形狀是因為前端 (client/runtime/sse.js + providers)
 // 本來就認得它; 但 data 裡帶了 lderror 的 duck type, 所以前端分辨得出「這是
 // wagent 說的」而不是上游的錯誤 —— 靠 id, 不靠訊息字串。
-function errorEvent(used, budget) {
+function errorEvent(used, budget, msg) {
   const payload = {
     type: 'error',
-    error: lderr.body(lderr.ID.QUOTA, '額度用完, 這次回應在中途被停止',
+    error: lderr.body(lderr.ID.QUOTA, (msg || MSG.zh).quotaStop,
       {used: used, budget: budget, partial: true})
   };
   return `event: error\ndata: ${JSON.stringify(payload)}\n\n`;

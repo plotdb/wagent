@@ -1,5 +1,5 @@
 import {readSSE, checkResponse} from '../sse.js';
-import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated, retainable, interruptedNote} from '../turn-context.js';
+import {userContent, countImages, compactHistory, MAX_IMAGES, wrapNudge, wrapLimit, limitReply, wrapTruncated, retainable, interruptedNote, strings} from '../turn-context.js';
 import {ID, make as lderr} from '../lderr.js';
 import {createProgress} from '../progress.js';
 
@@ -8,7 +8,7 @@ import {createProgress} from '../progress.js';
 // runTool 可回傳 Promise (前端 fs / shell 皆為 async)
 // 歷史 append-only, 見 anthropic.js 的同一段。openai (chat completions) 的快取是自動的
 // 前綴比對, 不必標快取點 —— 只要前面的訊息不改就吃得到。
-export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, maxImages, history: seed}) {
+export function createSession({system, tools, runTool, api, model, headers, maxSteps, softSteps, maxImages, lang, history: seed}) {
   const url = (api || '/api/agent') + '/llm/openai';
   // 見 anthropic.js 的同一段
   const MAX_TRUNCATED = 2;   // 見 anthropic.js
@@ -120,7 +120,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
   function send(text, cb) {
     const startLen = history.length;
     // 本輪的狀況描述接在後面; 舊的不動 (見 wrapContext)
-    history.push({role: 'user', content: userContent(text, cb && cb.context)});
+    history.push({role: 'user', content: userContent(text, cb && cb.context, lang)});
     const events = [];
 
     // tool 結果若帶圖: openai 的 tool message 只吃字串, 圖要另外補一則 user message
@@ -173,7 +173,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
     function flushNudges() {
       const extra = cb && cb.nudge ? cb.nudge() : null;
       if(extra && extra.length) {
-        history.push({role: 'user', content: [{type: 'text', text: wrapNudge(extra)}]});
+        history.push({role: 'user', content: [{type: 'text', text: wrapNudge(extra, lang)}]});
       }
     }
 
@@ -186,11 +186,11 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
     function flushLimit() {
       if(steps < softMax || warned) { return; }
       warned = true;
-      history.push({role: 'user', content: [{type: 'text', text: wrapLimit(steps, hardMax)}]});
+      history.push({role: 'user', content: [{type: 'text', text: wrapLimit(steps, hardMax, lang)}]});
     }
 
     const step = function() {
-      if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax), events: events, limited: true}); }
+      if(steps >= hardMax) { return Promise.resolve({reply: limitReply(hardMax, lang), events: events, limited: true}); }
       steps++;
       // 圖超過上限: 一次性重建 (見 turn-context.js 的〈圖的上限〉); openai 沒有 thinking 要丟
       if(countImages(history) > imageMax) { history = compactHistory(history, {keep: 1}); }
@@ -203,10 +203,10 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
           truncated++;
           if(truncated > MAX_TRUNCATED) {
             throw lderr(ID.TRUNCATED,
-              '模型回應連續 ' + MAX_TRUNCATED + ' 次超過長度上限被截斷, 已停止。');
+              strings(lang).truncatedStop(MAX_TRUNCATED));
           }
-          history.push({role: 'assistant', content: msg.content || '(回覆被截斷)'});
-          history.push({role: 'user', content: [{type: 'text', text: wrapTruncated()}]});
+          history.push({role: 'assistant', content: msg.content || strings(lang).truncatedReply});
+          history.push({role: 'user', content: [{type: 'text', text: wrapTruncated(lang)}]});
           return step();
         }
         delete msg.finish_reason;   // 不是對話的一部分, 別送回 provider
@@ -230,7 +230,7 @@ export function createSession({system, tools, runTool, api, model, headers, maxS
           break;
         }
       }
-      history.push({role: 'assistant', content: interruptedNote(e)});
+      history.push({role: 'assistant', content: interruptedNote(e, lang)});
       e.retained = true;
       throw e;
     });
